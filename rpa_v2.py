@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pyttsx3
  
-green_yellow_band = (174, 255, 50)
+green_band = (174, 255, 50)
 green_bg = (137, 162, 137)
 pink_bg = (187, 137, 137)
 pink_band = (255, 4, 255)
@@ -81,7 +81,14 @@ try:
     pyautogui.hotkey('alt', 'tab')
     start_time = time.time()
     screenshot = pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN])
-    get_top_right_coordinates(screenshot, pink_band)
+    green_band_coordinates = get_top_right_coordinates(screenshot, green_band)
+    green_bg_coordinates = get_top_right_coordinates(screenshot, green_bg)
+    pink_band_coordinates = get_top_right_coordinates(screenshot, pink_band)
+    pink_bg_coordinates = get_top_right_coordinates(screenshot, pink_bg)
+    print('green_band_coordinates:', green_band_coordinates)
+    print('green_bg_coordinates:', green_bg_coordinates)
+    print('pink_band_coordinates:', pink_band_coordinates)
+    print('pink_bg_coordinates:', pink_bg_coordinates)
     screenshot.save("screenshot.png")
 
 except Exception as e:
