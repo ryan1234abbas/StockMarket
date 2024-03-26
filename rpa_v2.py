@@ -5,32 +5,12 @@ import pyautogui
 from PIL import Image, ImageGrab, ImageDraw
 import time
 import numpy as np
-import datetime
 import pyttsx3
-from speedtest import Speedtest
-import psutil
-from memory_profiler import profile
  
 green_yellow_band = (174, 255, 50)
 green_bg = (137, 162, 137)
 pink_bg = (187, 137, 137)
 pink_band = (255, 4, 255)
- 
-def log_network():
-    speedtest = Speedtest()
-    download_speed = speedtest.download() / 1024 / 1024  # Convert Mbps to MB/s
-    upload_speed = speedtest.upload() / 1024 / 1024  # Convert Mbps to MB/s
-    print(f"Download speed: {download_speed:.2f} MB/s")
-    print(f"Upload speed: {upload_speed:.2f} MB/s")
- 
-def log_metrics():
-    """Log memory usage."""
-    memory_usage = psutil.virtual_memory().used / (1024 ** 3)  # Convert to GB
-    print(f"Memory Usage: {memory_usage:.2f} GB")
-    memory_usage = psutil.virtual_memory().percent
-    cpu_usage = psutil.cpu_percent()
-    disk_usage = psutil.disk_usage('/').percent
-    print(f"Memory: {memory_usage:.2f}%, CPU: {cpu_usage:.2f}%, Disk: {disk_usage:.2f}%")
 
 def show_popup(message):
     # Create a Tkinter root window
