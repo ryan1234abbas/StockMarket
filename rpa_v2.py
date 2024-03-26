@@ -1,16 +1,16 @@
 import threading
 from tkinter import messagebox
 import tkinter
+import traceback
 import pyautogui
-from PIL import Image, ImageGrab, ImageDraw
+from PIL import ImageDraw
 import time
-import numpy as np
 import pyttsx3
  
 green_band = (174, 255, 50)
-green_bg = (137, 162, 137)
-pink_bg = (187, 137, 137)
-pink_band = (255, 4, 255)
+green_bg = (161, 187, 137)
+purple_bg = (166, 160, 180)
+purple_band = (150, 4, 212)
 
 def show_popup(message):
     # Create a Tkinter root window
@@ -62,16 +62,7 @@ def reverse():
  
 def close():
     pyautogui.click(x=1876, y=142)
- 
-def mask_color(array1, array2, color):
-    mask1 = np.all(array1 == color, axis=-1)
-    mask2 = np.all(array2 == color, axis=-1)
-    array1[mask1] = [0, 0, 0]
-    array2[mask1] = [0, 0, 0]
-    array1[mask2] = [0, 0, 0]
-    array2[mask2] = [0, 0, 0]
-    return array1, array2
- 
+
 try:
     screen_width, screen_height = pyautogui.size()
     X_MARGIN_LEFT = 0
@@ -80,18 +71,37 @@ try:
     Y_BOTTOM_MARGIN = screen_height - 50
     pyautogui.hotkey('alt', 'tab')
     start_time = time.time()
-    screenshot = pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN])
-    green_band_coordinates = get_top_right_coordinates(screenshot, green_band)
-    green_bg_coordinates = get_top_right_coordinates(screenshot, green_bg)
-    pink_band_coordinates = get_top_right_coordinates(screenshot, pink_band)
-    pink_bg_coordinates = get_top_right_coordinates(screenshot, pink_bg)
-    print('green_band_coordinates:', green_band_coordinates)
-    print('green_bg_coordinates:', green_bg_coordinates)
-    print('pink_band_coordinates:', pink_band_coordinates)
-    print('pink_bg_coordinates:', pink_bg_coordinates)
-    screenshot.save("screenshot.png")
+    current_status = None
+    previous_status = None
+    while True:
+        screenshot = pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN])
+        green_band_coordinates = get_top_right_coordinates(screenshot, green_band)
+        green_bg_coordinates = get_top_right_coordinates(screenshot, green_bg)
+        purple_band_coordinates = get_top_right_coordinates(screenshot, purple_band)
+        purple_bg_coordinates = get_top_right_coordinates(screenshot, purple_bg)
+        green_band_x, green_band_y = green_band_coordinates
+        green_bg_x, green_bg_y = green_bg_coordinates
+        purple_band_x, purple_band_y = purple_band_coordinates
+        purple_bg_x, purple_bg_y = purple_bg_coordinates
+        if green_band_x < purple_band_x and green_bg_x < purple_bg_x:
+            current_status = 'red'
+            if current_status != previous_status and previous_status != None:
+                speak('Sell')
+                # sell()
+                break
+            previous_status = current_status
+        elif green_band_x > purple_band_x and green_bg_x > purple_bg_x:
+            current_status = 'green'
+            if current_status != previous_status and previous_status != None:
+                speak('Buy')
+                # buy()
+                break
+            previous_status = current_status
+        else:
+            speak('No action')
 
 except Exception as e:
     close()
     print('ERROR ::', e)
-    # screenshot.save("error.png")
+    print(traceback.format_exc())
+    screenshot.save("error.png")
