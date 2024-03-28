@@ -85,9 +85,23 @@ try:
         if px == green_bg and STATUS == PURPLE:
             STATUS = GREEN
             buy()
+            break
         elif px == purple_bg and STATUS == GREEN:
             STATUS = PURPLE
-            close()
+            sell()
+            break
+    while True:
+        px = pyautogui.pixel(int(pixel_pt[1]), int(pixel_pt[0]))
+        if px == green_bg and STATUS == PURPLE:
+            STATUS = GREEN
+            reverse()
+            # close()
+            # buy()
+        elif px == purple_bg and STATUS == GREEN:
+            STATUS = PURPLE
+            reverse()
+            # close()
+            # sell()
 
 
 except Exception as e:

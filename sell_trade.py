@@ -8,9 +8,12 @@ import time
 import pyttsx3
 
 green_band = [174, 255, 50]
-green_bg = [161, 187, 137]
-purple_bg = [166, 160, 180]
+green_bg = (161, 187, 137)
+purple_bg = (166, 160, 180)
 purple_band = [150, 4, 212]
+GREEN = 0
+PURPLE = 1
+STATUS = None
 
 def speak(text):
     memory_thread = threading.Thread(target=speak_thread, args=[text])
@@ -28,15 +31,26 @@ def draw_circle(image, x, y, radius=10):
     x2 = x + radius
     y2 = y + radius
     draw.ellipse((x1, y1, x2, y2), outline='red')
-    # image.show()
+    image.show()
 
-def get_top_right_x(screenshot_array, color):
+def get_top_right(screenshot_array, color):
     mask = np.all(screenshot_array == color, axis=-1)
     indices = np.argwhere(mask)
     if len(indices) == 0:
-        return -1
+        return [-1, -1]
     max_index = np.argmax(indices[:, 1])
-    return indices[max_index][1]
+    return indices[max_index]
+
+def get_pixel(screenshot_array):
+    global STATUS, GREEN, PURPLE
+    green_pt = get_top_right(screenshot_array, list(green_bg))
+    purple_pt = get_top_right(screenshot_array, list(purple_bg))
+    if green_pt[1] > purple_pt[1]:
+        STATUS = GREEN
+        return green_pt
+    else:
+        STATUS = PURPLE
+        return purple_pt
 
 def get_coordinates():
     point = pyautogui.position()
@@ -62,35 +76,19 @@ try:
     Y_BOTTOM_MARGIN = screen_height - 50
     pyautogui.hotkey('alt', 'tab')
     start_time = time.time()
-    current_status = None
     previous_status = None
     count = 0
+    screenshot = np.array(pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN]))
+    pixel_pt = get_pixel(screenshot)
     while True:
-        screenshot = np.array(pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN]))
-        # pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN]Clinical_TWC).save("screenshot.png")
-        green_band_x = get_top_right_x(screenshot, green_band)
-        # green_bg_x = get_top_right_x(screenshot, green_bg)
-        purple_band_x = get_top_right_x(screenshot, purple_band)
-        # purple_bg_x = get_top_right_x(screenshot, purple_bg)
-        if green_band_x < purple_band_x:# and green_bg_x < purple_bg_x:
-            current_status = 'red'
-            if current_status != previous_status and previous_status != None:
-                # speak('Sell')
-                if count == 0:
-                    sell()
-                    count += 1
-            previous_status = current_status
-        elif green_band_x > purple_band_x:# and green_bg_x > purple_bg_x:
-            current_status = 'green'
-            if current_status != previous_status and previous_status != None:
-                # speak('Buy')
-                if count == 1:
-                    close()
-                    count = 0
-            previous_status = current_status
-        else:
-            speak('No action')
-            break
+        px = pyautogui.pixel(int(pixel_pt[1]), int(pixel_pt[0]))
+        if px == purple_bg and STATUS == GREEN:
+            STATUS = PURPLE
+            sell()
+        elif px == green_bg and STATUS == PURPLE:
+            STATUS = GREEN
+            close()
+
 
 except Exception as e:
     close()
