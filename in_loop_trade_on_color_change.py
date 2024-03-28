@@ -67,7 +67,6 @@ try:
     count = 0
     while True:
         screenshot = np.array(pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN]))
-        # pixel = get_top_right_x()
         # pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN]Clinical_TWC).save("screenshot.png")
         green_band_x = get_top_right_x(screenshot, green_band)
         purple_band_x = get_top_right_x(screenshot, purple_band)
