@@ -67,35 +67,33 @@ try:
     count = 0
     while True:
         screenshot = np.array(pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN]))
+        # pixel = get_top_right_x()
         # pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN]Clinical_TWC).save("screenshot.png")
         green_band_x = get_top_right_x(screenshot, green_band)
-        # green_bg_x = get_top_right_x(screenshot, green_bg)
         purple_band_x = get_top_right_x(screenshot, purple_band)
-        # purple_bg_x = get_top_right_x(screenshot, purple_bg)
         if green_band_x < purple_band_x:# and green_bg_x < purple_bg_x:
             current_status = 'red'
             if current_status != previous_status and previous_status != None:
                 if count == 0:
-                    speak('Sell')
-                    # sell()
+                    # speak('Sell')
+                    sell()
                 else:
-                    close()
-                    count = 0
+                    reverse()
                 count += 1
             previous_status = current_status
         elif green_band_x > purple_band_x:# and green_bg_x > purple_bg_x:
             current_status = 'green'
             if current_status != previous_status and previous_status != None:
                 if count == 0:
-                    speak('Buy')
-                    # buy()
+                    # speak('Buy')
+                    buy()
                 else:
-                    close()
-                    count = 0
+                    reverse()
                 count += 1
             previous_status = current_status
         else:
             speak('No action')
+            break
 
 except Exception as e:
     close()
