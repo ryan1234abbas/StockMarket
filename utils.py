@@ -55,6 +55,24 @@ class Utils:
         max_index = np.argmax(indices[:, 1])
         return indices[max_index]
 
+    def get_top_n_bottom_pixel(self, screenshot_array, color):
+        mask = np.all(screenshot_array == color, axis=-1)
+        indices = np.argwhere(mask)
+        if len(indices) == 0:
+            return [-1, -1]
+        max_index = np.argmax(indices[:, 1])
+        return indices[max_index], indices[-1]
+
+    def get_right_edge(self, screenshot_array):
+        green_top, green_bottom = self.get_top_right(screenshot_array, list(self.green_bg))
+        purple_top, purple_bottom = self.get_top_right(screenshot_array, list(self.purple_bg))
+        if green_top[1] > purple_top[1]:
+            self.STATUS = self.GREEN_STATE
+            return green_top, green_bottom
+        else:
+            self.STATUS = self.PURPLE_STATE
+            return purple_top, purple_bottom
+
     def get_pixel(self, screenshot_array):
         green_pt = self.get_top_right(screenshot_array, list(self.green_bg))
         purple_pt = self.get_top_right(screenshot_array, list(self.purple_bg))
