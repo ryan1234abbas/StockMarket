@@ -63,14 +63,12 @@ class ParameterizedTrade:
         green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
         purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
         if all(green_list):
-            self.utils.STATUS = self.utils.GREEN_STATE
             while True:
                 screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                 purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
                 if any(purple_list):
                     break
         elif all(purple_list):
-            self.utils.STATUS = self.utils.PURPLE_STATE
             while True:
                 screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                 green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
@@ -81,11 +79,9 @@ class ParameterizedTrade:
             green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
             purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
             if all(green_list):
-                self.utils.STATUS = self.utils.GREEN_STATE
                 self.utils.buy()
                 self.close_green()
             elif all(purple_list):
-                self.utils.STATUS = self.utils.PURPLE_STATE
                 self.utils.sell()
                 self.close_purple()
     
@@ -110,7 +106,6 @@ class ParameterizedTrade:
         screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
         green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
         if all(green_list):
-            self.utils.STATUS = self.utils.GREEN_STATE
             while True:
                 screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                 purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
@@ -120,7 +115,6 @@ class ParameterizedTrade:
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
             if all(green_list):
-                self.utils.STATUS = self.utils.GREEN_STATE
                 self.utils.buy()
                 self.close_green()
     
@@ -129,7 +123,6 @@ class ParameterizedTrade:
         screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
         purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
         if all(purple_list):
-            self.utils.STATUS = self.utils.PURPLE_STATE
             while True:
                 screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                 green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
@@ -139,7 +132,6 @@ class ParameterizedTrade:
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
             if all(purple_list):
-                self.utils.STATUS = self.utils.PURPLE_STATE
                 self.utils.sell()
                 self.close_purple()
 
