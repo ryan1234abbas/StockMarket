@@ -13,10 +13,10 @@ class Utils:
         self.green_bg = (161, 187, 137)
         self.purple_bg = (166, 160, 180)
         self.purple_band = (150, 4, 212)
-        self.green_long_trade = (4, 102, 4)
-        self.green_small_trade = (53, 206, 53)
-        self.purple_long_trade = (130, 4, 130)
-        self.purple_small_trade = (255, 4, 255)
+        self.green_long_trigger = (4, 102, 4)
+        self.green_short_trigger = (53, 206, 53)
+        self.purple_long_trigger = (130, 4, 130)
+        self.purple_short_trigger = (255, 4, 255)
         self.GREEN_STATE = 0
         self.PURPLE_STATE = 1
         self.STATUS = None
@@ -55,7 +55,7 @@ class Utils:
         max_index = np.argmax(indices[:, 1])
         return indices[max_index]
 
-    def get_top_n_bottom_pixel(self, screenshot_array, color):
+    def get_top_and_bottom_pixel(self, screenshot_array, color):
         mask = np.all(screenshot_array == color, axis=-1)
         indices = np.argwhere(mask)
         if len(indices) == 0:
@@ -64,14 +64,23 @@ class Utils:
         return indices[max_index], indices[-1]
 
     def get_right_edge(self, screenshot_array):
-        green_top, green_bottom = self.get_top_right(screenshot_array, list(self.green_bg))
-        purple_top, purple_bottom = self.get_top_right(screenshot_array, list(self.purple_bg))
+        green_top, green_bottom = self.get_top_and_bottom_pixel(screenshot_array, list(self.green_bg))
+        purple_top, purple_bottom = self.get_top_and_bottom_pixel(screenshot_array, list(self.purple_bg))
         if green_top[1] > purple_top[1]:
             self.STATUS = self.GREEN_STATE
             return green_top, green_bottom
         else:
             self.STATUS = self.PURPLE_STATE
             return purple_top, purple_bottom
+
+    def check_color_in_vertical_line(self, screenshot_array, top, bottom, color):
+        line = screenshot_array[top[0]:bottom[0]+1, top[1]:top[1]+1]
+        return np.any(np.all(line == color, axis=-1))
+
+    def check_color_in_all_pixels(self, screenshot_array, color):
+        """ Check if the color is present in any pixel from screenshot."""
+        mask = np.all(screenshot_array == color, axis=-1)
+        return np.any(mask)
 
     def get_pixel(self, screenshot_array):
         green_pt = self.get_top_right(screenshot_array, list(self.green_bg))
@@ -83,18 +92,18 @@ class Utils:
             self.STATUS = self.PURPLE_STATE
             return purple_pt
 
-    def get_coordinates():
+    def get_coordinates(self):
         point = pyautogui.position()
         print(point)
 
-    def buy():
+    def buy(self):
         pyautogui.click(x=1798, y=42)
 
-    def sell():
+    def sell(self):
         pyautogui.click(x=1876, y=110)
 
-    def reverse():
+    def reverse(self):
         pyautogui.click(x=1798, y=145)
 
-    def close():
+    def close(self):
         pyautogui.click(x=1876, y=142)
