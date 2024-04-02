@@ -73,7 +73,7 @@ class PIXEL_TRADER:
 
     def buy_or_sell(self):
         while True:
-            px = pyautogui.pixel(self.pixel_pt[1], self.pixel_pt[0])
+            px = pyautogui.pixel(int(self.pixel_pt[1]), int(self.pixel_pt[0]))
             if px == self.green_bg and self.STATUS == self.PURPLE:
                 self.STATUS = self.GREEN
                 self.buy()
@@ -85,7 +85,7 @@ class PIXEL_TRADER:
 
     def reverse_after_buy_or_sell(self):
             while True:
-                px = pyautogui.pixel(self.pixel_pt[1], self.pixel_pt[0])
+                px = pyautogui.pixel(int(self.pixel_pt[1]), int(self.pixel_pt[0]))
                 if px == self.green_bg and self.STATUS == self.PURPLE:
                     self.STATUS = self.GREEN
                     self.reverse()
@@ -102,7 +102,8 @@ class PIXEL_TRADER:
             pyautogui.hotkey('alt', 'tab')
             screenshot = np.array(pyautogui.screenshot(region=[X_MARGIN_LEFT, Y_TOP_MARGIN, X_MARGIN_RIGHT, Y_BOTTOM_MARGIN]))
             self.pixel_pt = self.get_pixel(screenshot)
-            self.pixel_pt = [self.pixel_pt[1], self.pixel_pt[0]]
+            # self.pixel_pt = [int(self.pixel_pt[1]), int(self.pixel_pt[0])]
+            print('Pixel Point:', self.pixel_pt)
 
     def run_buy(self):
         while True:
@@ -133,7 +134,7 @@ class PIXEL_TRADER:
             event.set()
         self.stop_events.clear()
         stop_event = threading.Event()
-        buy_thread = threading.Thread(target=function, args=(stop_event,))
+        buy_thread = threading.Thread(target=function)
         buy_thread.start()
         self.stop_events.append(stop_event)
 
@@ -141,25 +142,25 @@ class PIXEL_TRADER:
         last_keystroke = 'a'
         self.stop_events = []
         stop_event = threading.Event()
-        buy_thread = threading.Thread(target=self.run_buy_or_sell, args=(stop_event,))
+        buy_thread = threading.Thread(target=self.run_buy_or_sell)
         buy_thread.start()
         self.stop_events.append(stop_event)
         while True:
             keystroke = keyboard.read_key()  # This will block until a key is pressed
             print(f'Key pressed: {keystroke}')
-            if keystroke == 'c':
+            if keystroke == 'enter':
                 print('Closed by user')
                 self.close()
-                if last_keystroke == 'a':
+                if last_keystroke == 'right':
                     self.handle_thread(self.run_buy_or_sell)
                 break
-            elif keystroke == 'b':
+            elif keystroke == 'up':
                 self.handle_thread(self.run_buy)
                 break
-            elif keystroke == 's':
+            elif keystroke == 'down':
                 self.handle_thread(self.run_sell)
                 break
-            elif keystroke == 'a':
+            elif keystroke == 'right':
                 self.handle_thread(self.run_buy_or_sell)
                 break
             last_keystroke = keystroke
@@ -172,6 +173,11 @@ class PIXEL_TRADER:
             self.close()
             print('ERROR ::', e)
             print(traceback.format_exc())
+
+    def test(self):
+        self.initial_setup()
+        self.buy_or_sell()
+        self.reverse_after_buy_or_sell()
 
 if __name__ == '__main__':
     trader = PIXEL_TRADER()
