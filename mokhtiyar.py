@@ -1,77 +1,20 @@
+# Safe exit of threads: press esc. do not press ctrl + C or ctrl + X
+# Keystroke will perform shortcuts defined in the active window along with the actions defined in the script.
+
 # Trading on change of colors in a band
+import sys
 import threading
 import traceback
 import numpy as np
 import pyautogui
-from PIL import ImageDraw, Image
 import keyboard
 import time
-import pyttsx3
 from utils import Utils
 
 class PIXEL_TRADER:
 
     def __init__(self):
         self.utils = Utils()
-        # self.utils.green_band = [174, 255, 50]
-        # self.utils.green_bg = (161, 187, 137)
-        # self.utils.purple_bg = (166, 160, 180)
-        # self.utils.purple_band = [150, 4, 212]
-        # self.utils.GREEN_STATE = 0
-        # self.utils.PURPLE_STATE = 1
-        # self.utils.STATUS = None
-
-    # def self.utils.speak(self, text):
-    #     memory_thread = threading.Thread(target=self.utils.speak_thread, args=[text])
-    #     memory_thread.start()
-
-    # def self.utils.speak_thread(self, text):
-    #     engine = pyttsx3.init()
-    #     engine.say(text)
-    #     engine.runAndWait()
-
-    # def self.utils.draw_circle(self, image, x, y, radius=10):
-    #     draw = ImageDraw.Draw(image)
-    #     x1 = x - radius
-    #     y1 = y - radius
-    #     x2 = x + radius
-    #     y2 = y + radius
-    #     draw.ellipse((x1, y1, x2, y2), outline='red')
-    #     image.show()
-
-    # def self.utils.get_top_right(self, screenshot_array, color):
-    #     mask = np.all(screenshot_array == color, axis=-1)
-    #     indices = np.argwhere(mask)
-    #     if len(indices) == 0:
-    #         return [-1, -1]
-    #     max_index = np.argmax(indices[:, 1])
-    #     return indices[max_index]
-
-    # def self.utils.get_pixel(self, screenshot_array):
-    #     green_pt = self.utils.get_top_right(screenshot_array, list(self.utils.green_bg))
-    #     purple_pt = self.utils.get_top_right(screenshot_array, list(self.utils.purple_bg))
-    #     if green_pt[1] > purple_pt[1]:
-    #         self.utils.STATUS = self.utils.GREEN_STATE
-    #         return green_pt
-    #     else:
-    #         self.utils.STATUS = self.utils.PURPLE_STATE
-    #         return purple_pt
-
-    # def self.utils.get_coordinates(self):
-    #     point = pyautogui.position()
-    #     print(point)
-
-    # def self.utils.buy(self):
-    #     pyautogui.click(x=1798, y=42)
-
-    # def self.utils.sell(self):
-    #     pyautogui.click(x=1876, y=110)
-
-    # def self.utils.reverse(self):
-    #     pyautogui.click(x=1798, y=145)
-
-    # def self.utils.close(self):
-    #     pyautogui.click(x=1876, y=142)
 
     def buy_or_sell(self):
         while True:
@@ -147,43 +90,60 @@ class PIXEL_TRADER:
         self.utils.buy_thread.__st
         self.stop_events.append(stop_event)
 
-    def key_thread(self):
+    def keystroke_thread(self):
         while True:
-            keystroke = keyboard.read_key()  # This will block until a key is pressed
-            print(f'Key pressed: {keystroke}')
-            self.utils.speak(keystroke)
-            self.last_keystroke = keystroke
+            self.keystroke = keyboard.read_key()  # This will block until a key is pressed
+            # self.utils.speak(self.keystroke)
+            # self.last_keystroke = self.keystroke
+            if self.keystroke == 'esc':
+                sys.exit()
 
     def keystroke_listener(self):
         self.last_keystroke = 'right'
-        self.key_thread = threading.Thread(target=self.utils.get_coordinates)
+        self.keystroke = None
+        self.key_thread = threading.Thread(target=self.keystroke_thread)
         self.key_thread.start()
         while True:
-            keystroke = keyboard.read_key()  # This will block until a key is pressed
-            print(f'Key pressed: {keystroke}')
-            if keystroke == 'enter':
-                # self.utils.speak('Enter')
-                print('Closed by user')
-                self.utils.close()
-                if self.last_keystroke == 'right':
-                    self.utils.speak(self.run_buy_or_sell())
-                break
-            elif keystroke == 'up':
-                # self.utils.speak('Up')
-                self.utils.speak(self.run_buy())
-                break
-            elif keystroke == 'down':
-                # self.utils.speak('Down')
-                self.utils.speak(self.run_sell())
-                break
-            elif keystroke == 'right':
-                # self.utils.speak('Right')
-                self.utils.speak(self.run_buy_or_sell())
-                break
-            elif keystroke == 'esc':
-                self.utils.speak('Escape')
-                break
-            self.last_keystroke = keystroke
+            time.sleep(0.01)
+            if self.keystroke:
+                print(self.last_keystroke, self.keystroke)
+                if self.keystroke == 'enter':
+                    print('Closed by user')
+                #     # self.utils.close()
+                #     if self.last_keystroke == 'right':
+                #         self.utils.speak('buy or sell')
+                #         # self.run_buy_or_sell()
+                    self.last_keystroke = self.keystroke
+                    self.keystroke = None
+                #     # break
+                elif self.keystroke == 'up':
+                #     # self.utils.speak('Up')
+                    # self.utils.speak('run_buy')
+                #     # self.run_buy()
+                    self.last_keystroke = self.keystroke
+                    self.keystroke = None
+                #     # break
+                elif self.keystroke == 'down':
+                #     # self.utils.speak('Down')
+                    # self.utils.speak('run_sell')
+                #     # self.run_sell()
+                    self.last_keystroke = self.keystroke
+                    self.keystroke = None
+                #     # break
+                elif self.keystroke == 'right':
+                #     # self.utils.speak('Right')
+                    # self.utils.speak('buy or sell')
+                #     # self.run_buy_or_sell()
+                    self.last_keystroke = self.keystroke
+                    self.keystroke = None
+                #     # break
+                elif self.keystroke == 'esc':
+                    self.utils.speak('Escape')
+                    return
+                else:
+                    self.last_keystroke = self.keystroke
+                    self.keystroke = None
+                    continue
 
     def keystroke_listener_TBD(self):
         self.last_keystroke = 'a'
@@ -194,31 +154,31 @@ class PIXEL_TRADER:
         # self.utils.buy_thread.start()
         # self.stop_events.append(stop_event)
         while True:
-            keystroke = keyboard.read_key()  # This will block until a key is pressed
+            self.keystroke = keyboard.read_key()  # This will block until a key is pressed
             print(f'Key pressed: {keystroke}')
-            if keystroke == 'enter':
+            if self.keystroke == 'enter':
                 self.utils.speak('Enter')
                 # print('Closed by user')
                 # self.utils.close()
                 # if self.last_keystroke == 'right':
                 #     self.handle_thread(self.run_buy_or_sell)
                 # break
-            elif keystroke == 'up':
+            elif self.keystroke == 'up':
                 self.utils.speak('Up')
                 # self.handle_thread(self.run_buy)
                 # break
-            elif keystroke == 'down':
+            elif self.keystroke == 'down':
                 self.utils.speak('Down')
                 # self.handle_thread(self.run_sell)
                 # break
-            elif keystroke == 'right':
+            elif self.keystroke == 'right':
                 self.utils.speak('Right')
                 # self.handle_thread(self.run_buy_or_sell)
                 # break
-            elif keystroke == 'esc':
+            elif self.keystroke == 'esc':
                 self.utils.speak('Escape')
                 break
-            self.last_keystroke = keystroke
+            self.last_keystroke = self.keystroke
 
     def run(self):
         try:
