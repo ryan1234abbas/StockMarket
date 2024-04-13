@@ -80,6 +80,7 @@ class Utils:
     def check_color_in_all_pixels(self, screenshot_array, color):
         """ Check if the color is present in any pixel from screenshot."""
         mask = np.all(screenshot_array == color, axis=-1)
+        # self.draw_circle(Image.fromarray(screenshot_array), mask[0], mask[1])
         return np.any(mask)
 
     def get_pixel(self, screenshot_array):
@@ -97,13 +98,17 @@ class Utils:
         print(point)
 
     def buy(self):
-        pyautogui.click(x=1798, y=42)
+        pyautogui.click(x=1803, y=43)
 
     def sell(self):
-        pyautogui.click(x=1876, y=110)
+        pyautogui.click(x=1879, y=42)
 
     def reverse(self):
-        pyautogui.click(x=1798, y=145)
+        pyautogui.click(x=1802, y=144)
 
     def close(self):
-        pyautogui.click(x=1876, y=142)
+        pyautogui.click(x=1877, y=144)
+
+if __name__ == '__main__':
+    utils = Utils()
+    utils.get_coordinates()
