@@ -13,7 +13,7 @@ from utils import Utils
 
 class PIXEL_TRADER:
 
-    def __init__(self):
+    def __init__(self, strategy, colors_to_check):
         self.utils = Utils()
         self.EDGE_DELTA = 5
         self.green_lines_list = []
@@ -39,14 +39,12 @@ class PIXEL_TRADER:
                 self.purple_lines_list.append(self.utils.purple_bg)
 
     def buy_or_sell(self):
-        while True:
-            # print('buy or sell')
-            if self.keystroke != 'right':
-                return
+        while self.keystroke == 'right':
+            print('buy or sell')
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             # Green lines are present
             if self.utils.check_color_in_all_pixels(screenshot_array, self.green_lines_list):
-                while True:
+                while self.keystroke == 'right':
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                     if self.utils.check_color_in_all_pixels(screenshot_array, self.purple_lines_list):
                         self.utils.sell()
@@ -54,7 +52,7 @@ class PIXEL_TRADER:
                         break
                 break
             else:
-                while True:
+                while self.keystroke == 'right':
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                     if self.utils.check_color_in_all_pixels(screenshot_array, self.green_lines_list):
                         self.utils.buy()
@@ -64,9 +62,7 @@ class PIXEL_TRADER:
 
     def reverse_after_buy_or_sell(self):
         while self.keystroke == 'right':
-            # print('Reverse after buy or sell')
-            # if self.keystroke != 'right':
-            #     return
+            print('Reverse after buy or sell')
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             if self.utils.STATUS == self.utils.GREEN_STATE:
                 while self.keystroke == 'right':
@@ -117,9 +113,7 @@ class PIXEL_TRADER:
 
     def run_buy(self):
         while self.keystroke == 'up':
-            # print('Running buy')
-            # if self.keystroke != 'up':
-            #     return
+            print('Running buy')
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
             if all(green_list):
@@ -138,9 +132,7 @@ class PIXEL_TRADER:
 
     def run_sell(self):
         while self.keystroke == 'down':
-            # print('Running sell')
-            # if self.keystroke != 'down':
-            #     return
+            print('Running sell')
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
             if all(purple_list):
@@ -200,7 +192,7 @@ class PIXEL_TRADER:
 
     def run(self):
         try:
-            # self.initial_setup()
+            self.initial_setup()
             self.keystroke_listener()
         except Exception as e:
             self.utils.close()
@@ -214,10 +206,10 @@ class PIXEL_TRADER:
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print('Usage: python parameterized_trade.py <strategy> <colors_to_check>')
+        print('Usage: python mokhtiyar.py <strategy> <colors_to_check>')
         print('strategy options: "buy&sell", "buy", "sell"')
         print('colors_to_check options: Any combo of: "mb", "st", "lt", "bg"')
-        print('Example: py parameterized_trade.py "buy&sell" "mb", "st", "lt"')
+        print('Example: py mokhtiyar.py "buy&sell" "mb", "st", "lt"')
         sys.exit(1)
 
     strategy = sys.argv[1] # buy&sell, buy, sell
@@ -225,10 +217,10 @@ if __name__ == '__main__':
 
     if strategy not in ['buy&sell', 'buy', 'sell'] or any(line not in ['mb', 'st', 'lt', 'bg'] for line in colors_to_check):
         print('Invalid strategy or colors_to_check argument.')
-        print('Usage: python parameterized_trade.py <strategy> <colors_to_check>')
+        print('Usage: python mokhtiyar.py <strategy> <colors_to_check>')
         print('strategy options: "buy&sell", "buy", "sell"')
         print('colors_to_check options: Any combo of: "mb", "st", "lt", "bg"')
-        print('Example: py parameterized_trade.py "buy&sell" "mb", "st", "lt"')
+        print('Example: py mokhtiyar.py "buy&sell" "mb", "st", "lt"')
         sys.exit(1)
 
     trader = PIXEL_TRADER(strategy, colors_to_check)
