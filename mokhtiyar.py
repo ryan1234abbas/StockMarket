@@ -70,7 +70,7 @@ class PIXEL_TRADER:
                 break
 
     def first_buy_and_sell(self):
-        # # self.utils.speak_thread('First buy and sell')
+        print('First buy and sell')
         key = 'space'
         print('Running buy or sell')
         self.utils.STATUS = None
@@ -143,7 +143,7 @@ class PIXEL_TRADER:
                             break
 
     def first_buy(self):
-        # # self.utils.speak_thread('Running buy')
+        print('Running first buy')
         key = 'right shift'
         self.utils.STATUS = None
         
@@ -163,7 +163,7 @@ class PIXEL_TRADER:
                         break
         
     def subsequent_buy(self):
-        # self.utils.speak_thread('Running buy')
+        print('Running subsequent buy')
         key = 'right shift'
         # Subsequent orders
         while self.keystroke == key:
@@ -185,7 +185,7 @@ class PIXEL_TRADER:
                         break
 
     def first_sell(self):
-        # self.utils.speak_thread('Running sell')
+        print('Running first sell')
         key = 'right ctrl'
         self.utils.STATUS = None
 
@@ -205,7 +205,7 @@ class PIXEL_TRADER:
                         break
         
     def subsequent_sell(self):
-        # self.utils.speak_thread('Running sell')
+        print('Running subsequent sell')
         key = 'right ctrl'
 
         # Subsequent orders
