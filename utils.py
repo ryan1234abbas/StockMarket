@@ -9,14 +9,14 @@ import pyttsx3
 class Utils:
 
     def __init__(self):
-        self.green_band = (174, 255, 50)
-        self.green_bg = (161, 187, 137)
-        self.purple_bg = (166, 160, 180)
-        self.purple_band = (150, 4, 212)
-        self.green_long_trigger = (4, 102, 4)
-        self.green_short_trigger = (53, 206, 53)
-        self.purple_long_trigger = (130, 4, 130)
-        self.purple_short_trigger = (255, 4, 255)
+        self.green_bg = (161, 187, 137) # LawnGreen
+        self.purple_bg = (166, 160, 180) # MediumPurple
+        self.green_band = (174, 255, 50) # GreenYellow
+        self.purple_band = (150, 4, 212) # DarkViolet
+        self.green_long_trigger = (4, 102, 4) # DarkGreen
+        self.green_short_trigger = (53, 206, 53) # LimeGreen
+        self.purple_long_trigger = (141, 4, 141) # DarkMagenta
+        self.purple_short_trigger = (255, 4, 255) # Magenta
         self.GREEN_STATE = 0
         self.PURPLE_STATE = 1
         self.STATUS = None
@@ -59,7 +59,7 @@ class Utils:
         mask = np.all(screenshot_array == color, axis=-1)
         indices = np.argwhere(mask)
         if len(indices) == 0:
-            return [-1, -1]
+            return [-1, -1], [-1, -1]
         max_index = np.argmax(indices[:, 1])
         return indices[max_index], indices[-1]
 

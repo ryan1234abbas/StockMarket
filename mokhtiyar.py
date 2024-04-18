@@ -1,5 +1,13 @@
-# Safe exit of threads: press esc. do not press ctrl + C or ctrl + X
+# Safe exit of threads: Press esc. Do not press right ctrl + C or right ctrl + X
 # Keystroke will perform shortcuts defined in the active window along with the actions defined in the script.
+
+############################################ DO NOT PRESS ANY KEY OTHER THAN THE DEFINED KEYS ############################################
+# Keys:
+# right shift: Buy
+# right ctrl: Sell
+# space: Buy or Sell
+# delete: Close
+# esc: Exit
 
 # Trading on change of colors in a band
 import sys
@@ -38,45 +46,207 @@ class PIXEL_TRADER:
             elif color == 'bg':
                 self.purple_lines_list.append(self.utils.purple_bg)
 
-    def buy_or_sell(self):
-        while self.keystroke == 'right':
+    def old_buy_or_sell(self):
+        key = 'space'
+        while self.keystroke == key:
             print('buy or sell')
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             # Green lines are present
-            if self.utils.check_color_in_all_pixels(screenshot_array, self.green_lines_list):
-                while self.keystroke == 'right':
+            if any([self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]):
+                while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-                    if self.utils.check_color_in_all_pixels(screenshot_array, self.purple_lines_list):
+                    if any([self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]):
                         self.utils.sell()
                         self.utils.STATUS = self.utils.PURPLE_STATE
                         break
                 break
             else:
-                while self.keystroke == 'right':
+                while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-                    if self.utils.check_color_in_all_pixels(screenshot_array, self.green_lines_list):
+                    if any([self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]):
                         self.utils.buy()
                         self.utils.STATUS = self.utils.GREEN_STATE
                         break
                 break
 
-    def reverse_after_buy_or_sell(self):
-        while self.keystroke == 'right':
-            print('Reverse after buy or sell')
+    def first_buy_and_sell(self):
+        # # self.utils.speak_thread('First buy and sell')
+        key = 'space'
+        print('Running buy or sell')
+        self.utils.STATUS = None
+
+        # First order
+        while self.keystroke == key and self.utils.STATUS is None:
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-            if self.utils.STATUS == self.utils.GREEN_STATE:
-                while self.keystroke == 'right':
+            green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+            purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+            if all(purple_list):
+                # self.utils.speak('All purple')
+                while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-                    if self.utils.check_color_in_all_pixels(screenshot_array, self.purple_lines_list):
+                    green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+                    if any(green_list):
+                        # self.utils.speak('Buy first')
+                        self.utils.buy()
+                        self.utils.STATUS = self.utils.GREEN_STATE
+                        break
+            elif all(green_list):
+                # self.utils.speak('All green')
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+                    if any(purple_list):
+                        self.utils.speak('sell first')
+                        self.utils.sell()
+                        self.utils.STATUS = self.utils.PURPLE_STATE
+                        break
+
+    def subsequent_buy_and_sell(self):
+        key = 'space'
+        # Subsequent orders
+        while self.keystroke == key:
+            if self.utils.STATUS == self.utils.GREEN_STATE:
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+                    if all(purple_list):
+                        self.utils.close()
+                        self.utils.STATUS = None
+                        self.utils.PREV_STATUS = self.utils.GREEN_STATE
+                        break
+            elif self.utils.STATUS == self.utils.PURPLE_STATE:
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+                    if all(green_list):
+                        self.utils.close()
+                        self.utils.STATUS = None
+                        self.utils.PREV_STATUS = self.utils.PURPLE_STATE
+                        break
+            else:
+                while self.keystroke == key:
+                    if self.utils.PREV_STATUS == self.utils.PURPLE_STATE:
+                        screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                        green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+                        if any(green_list):
+                            self.utils.buy()
+                            self.utils.STATUS = self.utils.GREEN_STATE
+                            # self.utils.PREV_STATUS = None
+                            break
+                    else:
+                        screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                        purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+                        if any(purple_list):
+                            self.utils.sell()
+                            self.utils.STATUS = self.utils.PURPLE_STATE
+                            # self.utils.PREV_STATUS = None
+                            break
+
+    def first_buy(self):
+        # # self.utils.speak_thread('Running buy')
+        key = 'right shift'
+        self.utils.STATUS = None
+        
+        # First order
+        while self.keystroke == key and self.utils.STATUS is None:
+            screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+            purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+            if all(purple_list):
+                self.utils.speak('All purple')
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+                    if any(green_list):
+                        self.utils.speak('Buy first')
+                        self.utils.buy()
+                        self.utils.STATUS = self.utils.GREEN_STATE
+                        break
+        
+    def subsequent_buy(self):
+        # self.utils.speak_thread('Running buy')
+        key = 'right shift'
+        # Subsequent orders
+        while self.keystroke == key:
+            if self.utils.STATUS == self.utils.GREEN_STATE:
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+                    if all(purple_list):
+                        self.utils.close()
+                        self.utils.STATUS = None
+                        break
+            else:
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+                    if any(green_list):
+                        self.utils.buy()
+                        self.utils.STATUS = self.utils.GREEN_STATE
+                        break
+
+    def first_sell(self):
+        # self.utils.speak_thread('Running sell')
+        key = 'right ctrl'
+        self.utils.STATUS = None
+
+        # First order
+        while self.keystroke == key and self.utils.STATUS is None:
+            screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+            green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+            if all(green_list):
+                self.utils.speak('All green')
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+                    if any(purple_list):
+                        self.utils.speak('sell first')
+                        self.utils.sell()
+                        self.utils.STATUS = self.utils.PURPLE_STATE
+                        break
+        
+    def subsequent_sell(self):
+        # self.utils.speak_thread('Running sell')
+        key = 'right ctrl'
+
+        # Subsequent orders
+        while self.keystroke == key:
+            if self.utils.STATUS == self.utils.PURPLE_STATE:
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+                    if all(green_list):
+                        self.utils.close()
+                        self.utils.STATUS = None
+                        break
+            else:
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+                    if any(purple_list):
+                        self.utils.sell()
+                        self.utils.STATUS = self.utils.PURPLE_STATE
+                        break
+
+
+
+    def old_reverse_after_buy_or_sell(self):
+        key = 'space'
+        while self.keystroke == key:
+            print('Reverse after buy or sell')
+            # screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+            if self.utils.STATUS == self.utils.GREEN_STATE:
+                while self.keystroke == key:
+                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+                    if any([self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]):
                         # self.utils.close()
                         # self.utils.sell()
                         self.utils.reverse()
                         self.utils.STATUS = self.utils.PURPLE_STATE
                         break
             else:
-                while self.keystroke == 'right':
+                while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-                    if self.utils.check_color_in_all_pixels(screenshot_array, self.green_lines_list):
+                    if any([self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]):
                         # self.utils.close()
                         # self.utils.buy()
                         self.utils.reverse()
@@ -95,73 +265,71 @@ class PIXEL_TRADER:
         self.top_pixel = list(map(int, self.top_pixel))
         self.bottom_pixel = list(map(int, self.bottom_pixel))
        
-    def close_green(self):
-        while True:
+    def close_green(self, key):
+        while self.keystroke == key:
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
-            if any(purple_list):
+            if all(purple_list):
                 self.utils.close()
                 return
 
-    def close_purple(self):
-        while True:
-            screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-            green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
-            if any(green_list):
-                self.utils.close()
-                return
-
-    def run_buy(self):
-        while self.keystroke == 'up':
-            print('Running buy')
+    def close_purple(self, key):
+        while self.keystroke == key:
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
             if all(green_list):
-                while self.keystroke == 'up':
+                self.utils.close()
+                return
+
+    def old_run_buy(self):
+        key = 'right shift'
+        while self.keystroke == key:
+            print('Running buy')
+            screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+            green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+            if any(green_list):
+                while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                     purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
                     if any(purple_list):
                         break
             else:
-                while self.keystroke == 'up':
+                while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                     green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
                     if all(green_list):
                         self.utils.buy()
-                        self.close_green()
+                        self.close_green(key)
 
-    def run_sell(self):
-        while self.keystroke == 'down':
+    def old_run_sell(self):
+        key = 'right ctrl'
+        while self.keystroke == key:
             print('Running sell')
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
-            if all(purple_list):
-                while self.keystroke == 'down':
+            if any(purple_list):
+                while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                     green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
                     if any(green_list):
                         break
             else:
-                while self.keystroke == 'down':
+                while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                     purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
                     if all(purple_list):
                         self.utils.sell()
-                        self.close_purple()
-
-    def run_buy_or_sell(self):
-        self.buy_or_sell()
-        self.reverse_after_buy_or_sell()
+                        self.close_purple(key)
 
     def keystroke_thread(self):
         while True:
             self.keystroke = keyboard.read_key()  # This will block until a key is pressed
-            # self.utils.speak(self.keystroke)
+            # print(self.keystroke)
             if self.keystroke == 'esc':
                 sys.exit()
 
     def keystroke_listener(self):
-        self.last_keystroke = 'right'
+        self.last_keystroke = None
         self.keystroke = None
         self.key_thread = threading.Thread(target=self.keystroke_thread)
         self.key_thread.start()
@@ -169,20 +337,29 @@ class PIXEL_TRADER:
             time.sleep(0.01)
             if self.keystroke != self.last_keystroke:
                 print(self.last_keystroke, self.keystroke)
-                if self.keystroke == 'enter':
-                    self.last_keystroke = self.keystroke
+                if self.keystroke == 'delete':
                     self.utils.close()
-                    if self.last_keystroke == 'right':
-                        self.run_buy_or_sell()
-                elif self.keystroke == 'up':
+                    if self.last_keystroke == 'space':
+                        self.keystroke = 'space'
+                        self.subsequent_buy_and_sell()
+                    elif self.last_keystroke == 'right shift':
+                        self.keystroke = 'right shift'
+                        self.subsequent_buy()
+                    elif self.last_keystroke == 'right ctrl':
+                        self.keystroke = 'right ctrl'
+                        self.subsequent_sell()
+                elif self.keystroke == 'right shift':
                     self.last_keystroke = self.keystroke
-                    self.run_buy()
-                elif self.keystroke == 'down':
+                    self.first_buy()
+                    self.subsequent_buy()
+                elif self.keystroke == 'right ctrl':
                     self.last_keystroke = self.keystroke
-                    self.run_sell()
-                elif self.keystroke == 'right':
+                    self.first_sell()
+                    self.subsequent_sell()
+                elif self.keystroke == 'space':
                     self.last_keystroke = self.keystroke
-                    self.run_buy_or_sell()
+                    self.first_buy_and_sell()
+                    self.subsequent_buy_and_sell()
                 elif self.keystroke == 'esc':
                     self.utils.speak('Escape')
                     return
@@ -192,6 +369,8 @@ class PIXEL_TRADER:
 
     def run(self):
         try:
+            # self.keystroke_thread()
+            # return
             self.initial_setup()
             self.keystroke_listener()
         except Exception as e:
