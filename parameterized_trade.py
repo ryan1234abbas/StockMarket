@@ -1,7 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import pyautogui
 import utils
 import numpy as np
+import threading
 
 class ParameterizedTrade:
 
@@ -18,7 +20,7 @@ class ParameterizedTrade:
                 self.green_lines_list.append(self.utils.green_long_trigger)
             elif color == 'bg':
                 self.green_lines_list.append(self.utils.green_bg)
-                
+
         self.purple_lines_list = []
         for color in colors_to_check:
             if color == 'mb':
@@ -40,8 +42,8 @@ class ParameterizedTrade:
 
     def run_initial_setup(self):
         """Get screenshot, find the right edge of the green and purple background, and set the status accordingly."""
-        # pyautogui screenshot region: 
-        # The box to capture. Default is the entire screen. If a four-integer tuple is passed, it is interpreted as the left, top, width, and height of the region to capture.    
+        # pyautogui screenshot region:
+        # The box to capture. Default is the entire screen. If a four-integer tuple is passed, it is interpreted as the left, top, width, and height of the region to capture.
         # left: The x-coordinate of the top-left corner of the region to capture.
         # top: The y-coordinate of the top-left corner of the region to capture.
         # width: The width of the region to capture.
@@ -57,11 +59,20 @@ class ParameterizedTrade:
         self.top_pixel = list(map(int, self.top_pixel))
         self.bottom_pixel = list(map(int, self.bottom_pixel))
 
+    def check_color_from_list(self, screenshot_array, color_list):
+        return [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in color_list]
+
     def run_buy_sell(self):
         print('Running buy_and_sell')
         screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-        green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
-        purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+
+        with ThreadPoolExecutor() as executor:
+            green_thread = executor.submit(self.check_color_from_list, screenshot_array, self.green_lines_list)
+            purple_thread = executor.submit(self.check_color_from_list, screenshot_array, self.purple_lines_list)
+        green_list = green_thread.result()
+        purple_list = purple_thread.result()
+        # green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+        # purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
         if all(green_list):
             while True:
                 screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
@@ -76,15 +87,33 @@ class ParameterizedTrade:
                     break
         while True:
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-            green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
-            purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+            with ThreadPoolExecutor() as executor:
+                green_thread = executor.submit(self.check_color_from_list, screenshot_array, self.green_lines_list)
+                purple_thread = executor.submit(self.check_color_from_list, screenshot_array, self.purple_lines_list)
+            green_list = green_thread.result()
+            purple_list = purple_thread.result()
             if all(green_list):
                 self.utils.buy()
-                self.close_green()
+                break
             elif all(purple_list):
                 self.utils.sell()
-                self.close_purple()
-    
+                break
+        while True:
+            screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
+            with ThreadPoolExecutor() as executor:
+                green_thread = executor.submit(self.check_color_from_list, screenshot_array, self.green_lines_list)
+                purple_thread = executor.submit(self.check_color_from_list, screenshot_array, self.purple_lines_list)
+            green_list = green_thread.result()
+            purple_list = purple_thread.result()
+            # green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
+            # purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
+            if all(green_list):
+                self.utils.reverse()
+                # self.close_green()
+            elif all(purple_list):
+                self.utils.reverse()
+                # self.close_purple()
+
     def close_green(self):
         while True:
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
@@ -117,7 +146,7 @@ class ParameterizedTrade:
             if all(green_list):
                 self.utils.buy()
                 self.close_green()
-    
+
     def run_sell(self):
         print('Running sell')
         screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
@@ -142,7 +171,7 @@ if __name__ == '__main__':
         print('colors_to_check options: Any combo of: "mb", "st", "lt", "bg"')
         print('Example: py parameterized_trade.py "buy&sell" "mb", "st", "lt"')
         sys.exit(1)
-    
+
     strategy = sys.argv[1] # buy&sell, buy, sell
     colors_to_check = sys.argv[2:] # All arguments from argv[2] onwards
 

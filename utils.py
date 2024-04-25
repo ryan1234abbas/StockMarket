@@ -1,4 +1,10 @@
 # Description: This file contains the utility functions for the bot.
+        # pyautogui screenshot region:
+        # The box to capture. Default is the entire screen. If a four-integer tuple is passed, it is interpreted as the left, top, width, and height of the region to capture.
+        # left: The x-coordinate of the top-left corner of the region to capture.
+        # top: The y-coordinate of the top-left corner of the region to capture.
+        # width: The width of the region to capture.
+        # height: The height of the region to capture.
 import threading
 import numpy as np
 import pyautogui
@@ -17,6 +23,9 @@ class Utils:
         self.green_short_trigger = (53, 206, 53) # LimeGreen
         self.purple_long_trigger = (141, 4, 141) # DarkMagenta
         self.purple_short_trigger = (255, 4, 255) # Magenta
+        self.up_pin_point = (4, 255, 129) # SpringGreen
+        self.down_pin_point = (4, 255, 255) # Cyan
+        self.gold_bar = (255, 216, 4) # Gold
         self.GREEN_STATE = 0
         self.PURPLE_STATE = 1
         self.STATUS = None
