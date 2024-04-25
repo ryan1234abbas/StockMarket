@@ -6,13 +6,35 @@ import pyautogui
 import utils
 from PIL import Image
 import pytesseract
-# import keras_ocr
+import tensorflow as tf
+from PIL import Image
+import numpy as np
 
 class Pandu:
     def __init__(self) -> None:
         self.utils = utils.Utils()
         self.EDGE_DELTA = 5
         self.WIDTH = 20
+        self.model = tf.keras.models.load_model('mask_model.h5')
+
+    def classify(self, img):
+        img = np.array(img)
+        img = img / 255.0
+        img = img[np.newaxis, ...]
+
+        prediction = self.model.predict(img)
+        prediction = np.argmax(prediction)
+
+        if prediction == 0:
+            print('DT')
+        elif prediction == 1:
+            print('HH')
+        elif prediction == 2:
+            print('HL')
+        elif prediction == 3:
+            print('LH')
+        else:
+            print('LL')
 
     def initial_setup(self):
         screen_width, screen_height = pyautogui.size()
@@ -32,7 +54,7 @@ class Pandu:
                 break
             ocr_image = pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH + 5, self.top_pixel[0], 2*self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0]))
             filename = os.path.join('dataset', str(count) + '.png')
-            time.sleep(3)
+            time.sleep(5)
             ocr_image.save(filename)
         # self.ocr(ocr_image)
 
