@@ -77,7 +77,9 @@ try:
                     # speak('Sell')
                     sell()
                 else:
-                    reverse()
+                    # reverse()
+                    close()
+                    sell()              
                 count += 1
             previous_status = current_status
         elif green_band_x > purple_band_x:# and green_bg_x > purple_bg_x:
@@ -87,7 +89,9 @@ try:
                     # speak('Buy')
                     buy()
                 else:
-                    reverse()
+                    # reverse()
+                    close()
+                    buy()                 
                 count += 1
             previous_status = current_status
         else:
