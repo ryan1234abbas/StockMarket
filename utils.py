@@ -10,6 +10,7 @@ import numpy as np
 import pyautogui
 from PIL import ImageDraw, Image
 import pyttsx3
+import tensorflow as tf
 
 
 class Utils:
@@ -29,6 +30,8 @@ class Utils:
         self.GREEN_STATE = 0
         self.PURPLE_STATE = 1
         self.STATUS = None
+        self.model = tf.keras.models.load_model('mask_model_v2.h5')
+        self.mapping = {0: 'DB', 1: 'DT', 2: 'HH', 3: 'HL', 4: 'LH', 5: 'LL'}
 
     def speak(self, text):
         memory_thread = threading.Thread(target=self.speak_thread, args=[text])

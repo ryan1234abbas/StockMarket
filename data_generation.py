@@ -10,14 +10,13 @@ class Pandu:
         self.utils = utils.Utils()
         self.EDGE_DELTA = 5
         self.WIDTH = 20
-        # self.model = tf.keras.models.load_model('mask_model.h5')
 
     def classify(self, img):
         img = np.array(img)
         img = img / 255.0
         img = img[np.newaxis, ...]
 
-        prediction = self.model.predict(img, verbose=0)
+        prediction = self.utils.model.predict(img, verbose=0)
         prediction = np.argmax(prediction)
 
         # if prediction == 0:
@@ -30,6 +29,7 @@ class Pandu:
         #     print('LH')
         # else:
         #     print('LL')
+
         return int(prediction)
 
     def generate_data(self):
@@ -45,14 +45,14 @@ class Pandu:
         self.bottom_pixel = list(map(int, self.bottom_pixel))
 
         # Generate dataset for training
-        count = 5000
+        count = 161469
         while True:
             count += 1
-            if count == 50000:
+            if count == 5000000:
                 break
             ocr_image = pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH + 5, self.top_pixel[0], 2*self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0]))
-            filename = os.path.join('dataset', str(count) + '.png')
-            time.sleep(5)
+            prediction = self.classify(ocr_image)
+            filename = os.path.join('dataset', str(count) + self.utils.mapping[prediction] + '.png')
             ocr_image.save(filename)
 
 

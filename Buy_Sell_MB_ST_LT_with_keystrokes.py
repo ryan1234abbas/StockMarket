@@ -385,10 +385,10 @@ class PIXEL_TRADER:
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print('Usage: python mokhtiyar.py <strategy> <colors_to_check>')
+        print('Usage: python Buy_Sell_MB_ST_LT_with_keystrokes <strategy> <colors_to_check>')
         print('strategy options: "buy&sell", "buy", "sell"')
         print('colors_to_check options: Any combo of: "mb", "st", "lt", "bg"')
-        print('Example: py mokhtiyar.py "buy&sell" "mb", "st", "lt"')
+        print('Example: py Buy_Sell_MB_ST_LT_with_keystrokes "buy&sell" "mb", "st", "lt"')
         sys.exit(1)
 
     strategy = sys.argv[1] # buy&sell, buy, sell
@@ -396,10 +396,10 @@ if __name__ == '__main__':
 
     if strategy not in ['buy&sell', 'buy', 'sell'] or any(line not in ['mb', 'st', 'lt', 'bg'] for line in colors_to_check):
         print('Invalid strategy or colors_to_check argument.')
-        print('Usage: python mokhtiyar.py <strategy> <colors_to_check>')
+        print('Usage: python Buy_Sell_MB_ST_LT_with_keystrokes <strategy> <colors_to_check>')
         print('strategy options: "buy&sell", "buy", "sell"')
         print('colors_to_check options: Any combo of: "mb", "st", "lt", "bg"')
-        print('Example: py mokhtiyar.py "buy&sell" "mb", "st", "lt"')
+        print('Example: py Buy_Sell_MB_ST_LT_with_keystrokes "buy&sell" "mb", "st", "lt"')
         sys.exit(1)
 
     trader = PIXEL_TRADER(strategy, colors_to_check)
