@@ -30,8 +30,36 @@ class Utils:
         self.GREEN_STATE = 0
         self.PURPLE_STATE = 1
         self.STATUS = None
-        self.model = tf.keras.models.load_model('mask_model_v2.h5')
+        self.CURRENT_CLASS = None
+        self.PREVIOUS_CLASS = None
+        self.PREVIOUS_PIN = None
+        self.CURRENT_PIN = None
+        self.model = tf.keras.models.load_model('mask_model_v3.2.h5')
         self.mapping = {0: 'DB', 1: 'DT', 2: 'HH', 3: 'HL', 4: 'LH', 5: 'LL'}
+
+    def classify(self, img):
+        img = np.array(img)
+        img = img / 255.0
+        img = img[np.newaxis, ...]
+
+        prediction = self.model.predict(img, verbose=0)
+        prediction = np.argmax(prediction)
+        return self.mapping[prediction]
+        # if prediction == 0:
+        #     return 'DB'
+        # elif prediction == 1:
+        #     return 'DT'
+        # elif prediction == 2:
+        #     return 'HH'
+        # elif prediction == 3:
+        #     return 'HL'
+        # elif prediction == 4:
+        #     return 'LH'
+        # # else:
+        # elif prediction == 5:
+        #     return 'LL'
+        # # return int(prediction)
+
 
     def speak(self, text):
         memory_thread = threading.Thread(target=self.speak_thread, args=[text])
