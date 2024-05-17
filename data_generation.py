@@ -45,10 +45,10 @@ class Pandu:
         self.bottom_pixel = list(map(int, self.bottom_pixel))
 
         # Generate dataset for training
-        count = 161469
+        count = 1953091
         while True:
             count += 1
-            if count == 5000000:
+            if count == 50000000:
                 break
             ocr_image = pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH + 5, self.top_pixel[0], 2*self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0]))
             prediction = self.classify(ocr_image)
