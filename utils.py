@@ -138,16 +138,16 @@ class Utils:
         print(point)
 
     def buy(self):
-        pyautogui.click(x=1803, y=43)
+        pyautogui.click(x=1776, y=40)
 
     def sell(self):
-        pyautogui.click(x=1879, y=42)
+        pyautogui.click(x=1868, y=41)
 
     def reverse(self):
-        pyautogui.click(x=1802, y=144)
+        pyautogui.click(x=1774, y=145)
 
     def close(self):
-        pyautogui.click(x=1877, y=144)
+        pyautogui.click(x=1869, y=144)
 
 if __name__ == '__main__':
     utils = Utils()

@@ -33,7 +33,8 @@ class Pandu:
             return 'HL'
         elif prediction == 4:
             return 'LH'
-        else:
+        # else:
+        elif prediction == 5:
             return 'LL'
         # return int(prediction)
 
@@ -92,73 +93,120 @@ class Pandu:
         self.initial_setup()
         self.previous_up_pin_pt = [-1, -1]
         self.previous_down_pin_pt = [-1, -1]
-        self.utils.STATUS = None
-        self.utils.PREVIOUS_CLASS = None
-        self.utils.CURRENT_CLASS = None
         ocr_image = pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH + 5, self.top_pixel[0], 2*self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0]))
         self.utils.PREVIOUS_CLASS = self.classify(ocr_image)
         while True:
             ocr_image = pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH + 5, self.top_pixel[0], 2*self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0]))
             screenshot_array = np.array(ocr_image)
-            # screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH, self.top_pixel[0], self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0])))
             up_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.up_pin_point)
             down_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.down_pin_point)
             self.utils.CURRENT_CLASS = self.classify(ocr_image)
-            if self.utils.CURRENT_CLASS != self.utils.PREVIOUS_CLASS:
-                print('Prev Class', self.utils.PREVIOUS_CLASS)
+            if up_pin_pt[1] > down_pin_pt[1] and self.utils.STATUS == self.utils.PURPLE_STATE:
+                self.utils.CURRENT_PIN = self.utils.GREEN_STATE
+                if (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'HH') or (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'LH'):
+                    self.utils.buy()
+                    print()
+                    print('----------------------------------------------------------------------------')
+                    print('BUY')
+                    print('Prev Class', self.utils.PREVIOUS_CLASS)
+                    print('Current class', self.utils.CURRENT_CLASS)
+                    print(up_pin_pt, down_pin_pt)
+                    print('----------------------------------------------------------------------------')
+                    print()
+                    self.utils.STATUS = self.utils.GREEN_STATE
+            elif up_pin_pt[1] < down_pin_pt[1] and self.utils.STATUS == self.utils.GREEN_STATE:
+                self.utils.CURRENT_PIN = self.utils.PURPLE_STATE
+                if (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'LL') or (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'HL'):
+                    self.utils.sell()
+                    print()
+                    print('----------------------------------------------------------------------------')
+                    print('SELL')
+                    # print('Prev Class', self.utils.PREVIOUS_CLASS)
+                    print('Current class', self.utils.CURRENT_CLASS)
+                    print(up_pin_pt, down_pin_pt)
+                    print('----------------------------------------------------------------------------')
+                    print()
+                    self.utils.STATUS = self.utils.PURPLE_STATE
+            elif up_pin_pt[1] > down_pin_pt[1] and self.utils.STATUS is None:
+                # self.utils.buy()
+                print()
+                print('----------------------------------------------------------------------------')
+                print('SELL')
+                # print('Prev Class', self.utils.PREVIOUS_CLASS)
                 print('Current class', self.utils.CURRENT_CLASS)
                 print(up_pin_pt, down_pin_pt)
-            if (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'HH') or (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'LH'): # and self.utils.STATUS == self.utils.PURPLE_STATE
-                while True:
-                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH, self.top_pixel[0], self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0])))
-                    up_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.up_pin_point)
-                    down_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.down_pin_point)
-                    if up_pin_pt[1] > down_pin_pt[1]:
-                        # self.utils.speak('BUY')
-                        # self.utils.close()
-                        self.utils.buy()
-                        # self.utils.reverse()
-                        print()
-                        print('----------------------------------------------------------------------------')
-                        print('BUY')
-                        print('Prev Class', self.utils.PREVIOUS_CLASS)
-                        print('Current class', self.utils.CURRENT_CLASS)
-                        print(up_pin_pt, down_pin_pt)
-                        text =self.utils.PREVIOUS_CLASS + self.utils.CURRENT_CLASS
-                        # self.utils.speak(text)
-                        print('----------------------------------------------------------------------------')
-                        print()
-                        self.utils.STATUS = self.utils.GREEN_STATE
-                        break
-            elif (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'LL') or (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'HL'): # and self.utils.STATUS == self.utils.GREEN_STATE
-                while True:
-                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH, self.top_pixel[0], self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0])))
-                    up_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.up_pin_point)
-                    down_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.down_pin_point)
-                    if up_pin_pt[1] < down_pin_pt[1]:
-                        # self.utils.speak('SELL')
-                        # self.utils.close()
-                        self.utils.sell()
-                        # self.utils.reverse()
-                        print()
-                        print('----------------------------------------------------------------------------')
-                        print('SELL')
-                        print('Prev Class', self.utils.PREVIOUS_CLASS)
-                        print('Current class', self.utils.CURRENT_CLASS)
-                        print(up_pin_pt, down_pin_pt)
-                        print('----------------------------------------------------------------------------')
-                        print()
-                        self.utils.STATUS = self.utils.PURPLE_STATE
-                        break
-            #elif up_pin_pt[1] > down_pin_pt[1] and self.utils.STATUS == self.utils.PURPLE_STATE:
-                # self.utils.speak('Green')
-                # self.utils.close()
-                # self.utils.STATUS = None
-            # elif up_pin_pt[1] < down_pin_pt[1] and self.utils.STATUS == self.utils.GREEN_STATE:
-                # self.utils.speak('Cyan')
-                # self.utils.close()
-                # self.utils.STATUS = None
-            self.utils.PREVIOUS_CLASS = self.utils.CURRENT_CLASS
+                print('----------------------------------------------------------------------------')
+                print()
+                self.utils.STATUS = self.utils.GREEN_STATE
+            elif up_pin_pt[1] < down_pin_pt[1] and self.utils.STATUS is None:
+                # self.utils.sell()
+                print()
+                print('----------------------------------------------------------------------------')
+                print('SELL')
+                # print('Prev Class', self.utils.PREVIOUS_CLASS)
+                print('Current class', self.utils.CURRENT_CLASS)
+                print(up_pin_pt, down_pin_pt)
+                print('----------------------------------------------------------------------------')
+                print()
+                self.utils.STATUS = self.utils.PURPLE_STATE
+
+
+
+            # if self.utils.CURRENT_CLASS != self.utils.PREVIOUS_CLASS:
+            #     # print('Prev Class', self.utils.PREVIOUS_CLASS)
+            #     # print('Current class', self.utils.CURRENT_CLASS)
+            #     # print(up_pin_pt, down_pin_pt)
+            #     if (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'HH') or (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'LH'): # and self.utils.STATUS == self.utils.PURPLE_STATE
+            #         while True:
+            #             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH, self.top_pixel[0], self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0])))
+            #             up_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.up_pin_point)
+            #             down_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.down_pin_point)
+            #             if up_pin_pt[1] > down_pin_pt[1]:
+            #                 # self.utils.speak('BUY')
+            #                 # self.utils.close()
+            #                 self.utils.buy()
+            #                 # self.utils.reverse()
+            #                 print()
+            #                 print('----------------------------------------------------------------------------')
+            #                 print('BUY')
+            #                 print('Prev Class', self.utils.PREVIOUS_CLASS)
+            #                 print('Current class', self.utils.CURRENT_CLASS)
+            #                 print(up_pin_pt, down_pin_pt)
+            #                 # text =self.utils.PREVIOUS_CLASS + self.utils.CURRENT_CLASS
+            #                 # self.utils.speak(text)
+            #                 print('----------------------------------------------------------------------------')
+            #                 print()
+            #                 self.utils.STATUS = self.utils.GREEN_STATE
+            #                 break
+            #     elif (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'LL') or (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'HL'): # and self.utils.STATUS == self.utils.GREEN_STATE
+            #         while True:
+            #             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH, self.top_pixel[0], self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0])))
+            #             up_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.up_pin_point)
+            #             down_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.down_pin_point)
+            #             if up_pin_pt[1] < down_pin_pt[1]:
+            #                 # self.utils.speak('SELL')
+            #                 # self.utils.close()
+            #                 self.utils.sell()
+            #                 # self.utils.reverse()
+            #                 print()
+            #                 print('----------------------------------------------------------------------------')
+            #                 print('SELL')
+            #                 print('Prev Class', self.utils.PREVIOUS_CLASS)
+            #                 print('Current class', self.utils.CURRENT_CLASS)
+            #                 print(up_pin_pt, down_pin_pt)
+            #                 print('----------------------------------------------------------------------------')
+            #                 print()
+            #                 self.utils.STATUS = self.utils.PURPLE_STATE
+            #                 break
+            # #elif up_pin_pt[1] > down_pin_pt[1] and self.utils.STATUS == self.utils.PURPLE_STATE:
+            #     # self.utils.speak('Green')
+            #     # self.utils.close()
+            #     # self.utils.STATUS = None
+            # # elif up_pin_pt[1] < down_pin_pt[1] and self.utils.STATUS == self.utils.GREEN_STATE:
+            #     # self.utils.speak('Cyan')
+            #     # self.utils.close()
+            #     # self.utils.STATUS = None
+            # self.utils.PREVIOUS_CLASS = self.utils.CURRENT_CLASS
 
 
 if __name__ == '__main__':
