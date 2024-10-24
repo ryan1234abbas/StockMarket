@@ -46,29 +46,6 @@ class PIXEL_TRADER:
             elif color == 'bg':
                 self.purple_lines_list.append(self.utils.purple_bg)
 
-    def old_buy_or_sell(self):
-        key = 'space'
-        while self.keystroke == key:
-            print('buy or sell')
-            screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-            # Green lines are present
-            if any([self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]):
-                while self.keystroke == key:
-                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-                    if any([self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]):
-                        self.utils.sell()
-                        self.utils.STATUS = self.utils.PURPLE_STATE
-                        break
-                break
-            else:
-                while self.keystroke == key:
-                    screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
-                    if any([self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]):
-                        self.utils.buy()
-                        self.utils.STATUS = self.utils.GREEN_STATE
-                        break
-                break
-
     def first_buy_and_sell(self):
         print('First buy and sell')
         key = 'space'
@@ -79,23 +56,25 @@ class PIXEL_TRADER:
             screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
             green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
             purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
-            if all(purple_list):
-                # self.utils.speak('All purple')
+            if any(purple_list):
+                self.utils.speak('All purple')
                 while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                     green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
                     if any(green_list):
                         # self.utils.speak('Buy first')
+                        print('Buy first')
                         self.utils.buy()
                         self.utils.STATUS = self.utils.GREEN_STATE
                         break
-            elif all(green_list):
-                # self.utils.speak('All green')
+            elif any(green_list):
+                self.utils.speak('All green')
                 while self.keystroke == key:
                     screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                     purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
                     if any(purple_list):
                         # self.utils.speak('sell first')
+                        print('Sell first')
                         self.utils.sell()
                         self.utils.STATUS = self.utils.PURPLE_STATE
                         break
@@ -129,6 +108,8 @@ class PIXEL_TRADER:
                         screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                         green_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.green_lines_list]
                         if any(green_list):
+                            # self.utils.speak('Buy Subsequent')
+                            print('Buy Subsequent')
                             self.utils.buy()
                             self.utils.STATUS = self.utils.GREEN_STATE
                             # self.utils.PREV_STATUS = None
@@ -137,6 +118,8 @@ class PIXEL_TRADER:
                         screenshot_array = np.array(pyautogui.screenshot(region=(self.top_pixel[1]-self.EDGE_DELTA, self.top_pixel[0], 1, self.bottom_pixel[0] - self.top_pixel[0])))
                         purple_list = [self.utils.check_color_in_all_pixels(screenshot_array, color) for color in self.purple_lines_list]
                         if any(purple_list):
+                            # self.utils.speak('Sell Subsequent')
+                            print('Sell Subsequent')
                             self.utils.sell()
                             self.utils.STATUS = self.utils.PURPLE_STATE
                             # self.utils.PREV_STATUS = None
@@ -360,6 +343,9 @@ class PIXEL_TRADER:
                     self.last_keystroke = self.keystroke
                     self.first_buy_and_sell()
                     self.subsequent_buy_and_sell()
+                elif self.keystroke == 'right alt':
+                    self.last_keystroke = self.keystroke
+                    self.utils.speak('Pause')
                 elif self.keystroke == 'esc':
                     self.utils.speak('Escape')
                     return
