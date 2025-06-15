@@ -8,12 +8,15 @@ from PIL import Image
 import pytesseract
 from PIL import Image
 import numpy as np
+from take_screenshot import TabScreenshotter
 
 class Pandu:
     def __init__(self) -> None:
         self.utils = utils.Utils()
         self.EDGE_DELTA = 5
         self.WIDTH = 20
+        self.tab_screenshotter = TabScreenshotter()
+
         
 
     def classify(self, img):
@@ -37,18 +40,32 @@ class Pandu:
         elif prediction == 5:
             return 'LL'
         # return int(prediction)
-
     def initial_setup(self):
-        screen_width, screen_height = pyautogui.size()
-        X_TOP = 0 #screen_width - 445
-        Y_TOP = 0
-        WIDTH = screen_width - 245
-        HEIGHT = screen_height - 50
-        pyautogui.hotkey('alt', 'tab')
-        screenshot_array = np.array(pyautogui.screenshot(region=[X_TOP, Y_TOP, WIDTH, HEIGHT]))
-        self.top_pixel, self.bottom_pixel = self.utils.get_right_edge(screenshot_array)
-        self.top_pixel = list(map(int, self.top_pixel))
-        self.bottom_pixel = list(map(int, self.bottom_pixel))
+        self.tab_screenshotter.run()
+        #load both saved screenshots
+        img_3020 = cv2.imread(f"{self.tab_screenshotter.save_dir}/3020.png")
+        img_1510 = cv2.imread(f"{self.tab_screenshotter.save_dir}/1510.png")
+
+        self.top_pixel_3020, self.bottom_pixel_3020 = self.utils.get_right_edge(img_3020)
+        self.top_pixel_1510, self.bottom_pixel_1510 = self.utils.get_right_edge(img_1510)
+
+        # Convert to int lists
+        self.top_pixel_3020 = list(map(int, self.top_pixel_3020))
+        self.bottom_pixel_3020 = list(map(int, self.bottom_pixel_3020))
+        self.top_pixel_1510 = list(map(int, self.top_pixel_1510))
+        self.bottom_pixel_1510 = list(map(int, self.bottom_pixel_1510))
+
+    # def initial_setup(self):        
+    #     screen_width, screen_height = pyautogui.size()
+    #     X_TOP = 0 #screen_width - 445
+    #     Y_TOP = 0
+    #     WIDTH = screen_width - 245
+    #     HEIGHT = screen_height - 50
+    #     pyautogui.hotkey('alt', 'tab')
+    #     screenshot_array = np.array(pyautogui.screenshot(region=[X_TOP, Y_TOP, WIDTH, HEIGHT]))
+    #     self.top_pixel, self.bottom_pixel = self.utils.get_right_edge(screenshot_array)
+    #     self.top_pixel = list(map(int, self.top_pixel))
+    #     self.bottom_pixel = list(map(int, self.bottom_pixel))
 
     # def ocr(self, image):
     #     os.environ['TESSDATA_PREFIX'] = 'C:\\Program Files\\Tesseract-OCR\\tessdata'
@@ -89,66 +106,171 @@ class Pandu:
     #     # print(pred)
     #     return text
 
+    # def run(self):
+    #     self.initial_setup()
+    #     self.previous_up_pin_pt = [-1, -1]
+    #     self.previous_down_pin_pt = [-1, -1]
+    #     ocr_image = pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH + 5, self.top_pixel[0], 2*self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0]))
+    #     self.utils.PREVIOUS_CLASS = self.classify(ocr_image)
+    #     while True:
+    #         ocr_image = pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH + 5, self.top_pixel[0], 2*self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0]))
+    #         screenshot_array = np.array(ocr_image)
+    #         up_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.up_pin_point)
+    #         down_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.down_pin_point)
+    #         self.utils.CURRENT_CLASS = self.classify(ocr_image)
+    #         if up_pin_pt[1] > down_pin_pt[1] and self.utils.STATUS == self.utils.PURPLE_STATE:
+    #             self.utils.CURRENT_PIN = self.utils.GREEN_STATE
+    #             if (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'HH') or (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'LH'):
+    #                 self.utils.buy()
+    #                 print()
+    #                 print('----------------------------------------------------------------------------')
+    #                 print('BUY')
+    #                 print('Prev Class', self.utils.PREVIOUS_CLASS)
+    #                 print('Current class', self.utils.CURRENT_CLASS)
+    #                 print(up_pin_pt, down_pin_pt)
+    #                 print('----------------------------------------------------------------------------')
+    #                 print()
+    #                 self.utils.STATUS = self.utils.GREEN_STATE
+    #         elif up_pin_pt[1] < down_pin_pt[1] and self.utils.STATUS == self.utils.GREEN_STATE:
+    #             self.utils.CURRENT_PIN = self.utils.PURPLE_STATE
+    #             if (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'LL') or (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'HL'):
+    #                 self.utils.sell()
+    #                 print()
+    #                 print('----------------------------------------------------------------------------')
+    #                 print('SELL')
+    #                 # print('Prev Class', self.utils.PREVIOUS_CLASS)
+    #                 print('Current class', self.utils.CURRENT_CLASS)
+    #                 print(up_pin_pt, down_pin_pt)
+    #                 print('----------------------------------------------------------------------------')
+    #                 print()
+    #                 self.utils.STATUS = self.utils.PURPLE_STATE
+    #         elif up_pin_pt[1] > down_pin_pt[1] and self.utils.STATUS is None:
+    #             # self.utils.buy()
+    #             print()
+    #             print('----------------------------------------------------------------------------')
+    #             print('SELL')
+    #             # print('Prev Class', self.utils.PREVIOUS_CLASS)
+    #             print('Current class', self.utils.CURRENT_CLASS)
+    #             print(up_pin_pt, down_pin_pt)
+    #             print('----------------------------------------------------------------------------')
+    #             print()
+    #             self.utils.STATUS = self.utils.GREEN_STATE
+    #         elif up_pin_pt[1] < down_pin_pt[1] and self.utils.STATUS is None:
+    #             # self.utils.sell()
+    #             print()
+    #             print('----------------------------------------------------------------------------')
+    #             print('SELL')
+    #             # print('Prev Class', self.utils.PREVIOUS_CLASS)
+    #             print('Current class', self.utils.CURRENT_CLASS)
+    #             print(up_pin_pt, down_pin_pt)
+    #             print('----------------------------------------------------------------------------')
+    #             print()
+    #             self.utils.STATUS = self.utils.PURPLE_STATE
+
     def run(self):
         self.initial_setup()
-        self.previous_up_pin_pt = [-1, -1]
-        self.previous_down_pin_pt = [-1, -1]
-        ocr_image = pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH + 5, self.top_pixel[0], 2*self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0]))
-        self.utils.PREVIOUS_CLASS = self.classify(ocr_image)
+        # Initialize per-tab STATUS
+        self.utils.STATUS_3020 = None
+        self.utils.STATUS_1510 = None
+
+        # Take initial screenshots for both tabs and classify
+        ocr_image_3020 = pyautogui.screenshot(region=(
+            self.top_pixel_3020[1] - self.WIDTH + 5,
+            self.top_pixel_3020[0],
+            2 * self.WIDTH,
+            self.bottom_pixel_3020[0] - self.top_pixel_3020[0]
+        ))
+        ocr_image_1510 = pyautogui.screenshot(region=(
+            self.top_pixel_1510[1] - self.WIDTH + 5,
+            self.top_pixel_1510[0],
+            2 * self.WIDTH,
+            self.bottom_pixel_1510[0] - self.top_pixel_1510[0]
+        ))
+
+        self.utils.PREVIOUS_CLASS_3020 = self.classify(ocr_image_3020)
+        self.utils.PREVIOUS_CLASS_1510 = self.classify(ocr_image_1510)
+
         while True:
-            ocr_image = pyautogui.screenshot(region=(self.top_pixel[1] - self.WIDTH + 5, self.top_pixel[0], 2*self.WIDTH, self.bottom_pixel[0] - self.top_pixel[0]))
-            screenshot_array = np.array(ocr_image)
-            up_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.up_pin_point)
-            down_pin_pt = self.utils.get_top_right(screenshot_array, self.utils.down_pin_point)
-            self.utils.CURRENT_CLASS = self.classify(ocr_image)
-            if up_pin_pt[1] > down_pin_pt[1] and self.utils.STATUS == self.utils.PURPLE_STATE:
-                self.utils.CURRENT_PIN = self.utils.GREEN_STATE
-                if (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'HH') or (self.utils.CURRENT_CLASS == 'HL' and self.utils.PREVIOUS_CLASS == 'LH'):
-                    self.utils.buy()
-                    print()
-                    print('----------------------------------------------------------------------------')
-                    print('BUY')
-                    print('Prev Class', self.utils.PREVIOUS_CLASS)
-                    print('Current class', self.utils.CURRENT_CLASS)
-                    print(up_pin_pt, down_pin_pt)
-                    print('----------------------------------------------------------------------------')
-                    print()
-                    self.utils.STATUS = self.utils.GREEN_STATE
-            elif up_pin_pt[1] < down_pin_pt[1] and self.utils.STATUS == self.utils.GREEN_STATE:
-                self.utils.CURRENT_PIN = self.utils.PURPLE_STATE
-                if (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'LL') or (self.utils.CURRENT_CLASS == 'LH' and self.utils.PREVIOUS_CLASS == 'HL'):
-                    self.utils.sell()
-                    print()
-                    print('----------------------------------------------------------------------------')
-                    print('SELL')
-                    # print('Prev Class', self.utils.PREVIOUS_CLASS)
-                    print('Current class', self.utils.CURRENT_CLASS)
-                    print(up_pin_pt, down_pin_pt)
-                    print('----------------------------------------------------------------------------')
-                    print()
-                    self.utils.STATUS = self.utils.PURPLE_STATE
-            elif up_pin_pt[1] > down_pin_pt[1] and self.utils.STATUS is None:
-                # self.utils.buy()
-                print()
-                print('----------------------------------------------------------------------------')
-                print('SELL')
-                # print('Prev Class', self.utils.PREVIOUS_CLASS)
-                print('Current class', self.utils.CURRENT_CLASS)
+            # ---------- 3020 ----------
+            ocr_image_3020 = pyautogui.screenshot(region=(
+                self.top_pixel_3020[1] - self.WIDTH + 5,
+                self.top_pixel_3020[0],
+                2 * self.WIDTH,
+                self.bottom_pixel_3020[0] - self.top_pixel_3020[0]
+            ))
+            screenshot_array_3020 = np.array(ocr_image_3020)
+            up_pin_pt_3020 = self.utils.get_top_right(screenshot_array_3020, self.utils.up_pin_point)
+            down_pin_pt_3020 = self.utils.get_top_right(screenshot_array_3020, self.utils.down_pin_point)
+            self.utils.CURRENT_CLASS_3020 = self.classify(ocr_image_3020)
+
+            self.utils.STATUS_3020 = self._process_logic(
+                up_pin_pt_3020,
+                down_pin_pt_3020,
+                self.utils.PREVIOUS_CLASS_3020,
+                self.utils.CURRENT_CLASS_3020,
+                tab_name="3020",
+                status=self.utils.STATUS_3020
+            )
+
+            self.utils.PREVIOUS_CLASS_3020 = self.utils.CURRENT_CLASS_3020
+
+            # ---------- 1510 ----------
+            ocr_image_1510 = pyautogui.screenshot(region=(
+                self.top_pixel_1510[1] - self.WIDTH + 5,
+                self.top_pixel_1510[0],
+                2 * self.WIDTH,
+                self.bottom_pixel_1510[0] - self.top_pixel_1510[0]
+            ))
+            screenshot_array_1510 = np.array(ocr_image_1510)
+            up_pin_pt_1510 = self.utils.get_top_right(screenshot_array_1510, self.utils.up_pin_point)
+            down_pin_pt_1510 = self.utils.get_top_right(screenshot_array_1510, self.utils.down_pin_point)
+            self.utils.CURRENT_CLASS_1510 = self.classify(ocr_image_1510)
+
+            self.utils.STATUS_1510 = self._process_logic(
+                up_pin_pt_1510,
+                down_pin_pt_1510,
+                self.utils.PREVIOUS_CLASS_1510,
+                self.utils.CURRENT_CLASS_1510,
+                tab_name="1510",
+                status=self.utils.STATUS_1510
+            )
+
+            self.utils.PREVIOUS_CLASS_1510 = self.utils.CURRENT_CLASS_1510
+
+
+    def _process_logic(self, up_pin_pt, down_pin_pt, previous_class, current_class, tab_name, status):
+        if up_pin_pt[1] > down_pin_pt[1] and status == self.utils.PURPLE_STATE:
+            self.utils.CURRENT_PIN = self.utils.GREEN_STATE
+            if (current_class == 'HL' and previous_class in ['HH', 'LH']):
+                self.utils.buy()
+                print(f"\n------ [{tab_name}] BUY ------")
+                print(f"Prev Class: {previous_class}, Current Class: {current_class}")
                 print(up_pin_pt, down_pin_pt)
-                print('----------------------------------------------------------------------------')
-                print()
-                self.utils.STATUS = self.utils.GREEN_STATE
-            elif up_pin_pt[1] < down_pin_pt[1] and self.utils.STATUS is None:
-                # self.utils.sell()
-                print()
-                print('----------------------------------------------------------------------------')
-                print('SELL')
-                # print('Prev Class', self.utils.PREVIOUS_CLASS)
-                print('Current class', self.utils.CURRENT_CLASS)
+                print("------------------------------\n")
+                return self.utils.GREEN_STATE
+        elif up_pin_pt[1] < down_pin_pt[1] and status == self.utils.GREEN_STATE:
+            self.utils.CURRENT_PIN = self.utils.PURPLE_STATE
+            if (current_class == 'LH' and previous_class in ['LL', 'HL']):
+                self.utils.sell()
+                print(f"\n------ [{tab_name}] SELL ------")
+                print(f"Prev Class: {previous_class}, Current Class: {current_class}")
                 print(up_pin_pt, down_pin_pt)
-                print('----------------------------------------------------------------------------')
-                print()
-                self.utils.STATUS = self.utils.PURPLE_STATE
+                print("------------------------------\n")
+                return self.utils.PURPLE_STATE
+        elif up_pin_pt[1] > down_pin_pt[1] and status is None:
+            print(f"\n------ [{tab_name}] SELL ------")
+            print(f"Current Class: {current_class}")
+            print(up_pin_pt, down_pin_pt)
+            print("------------------------------\n")
+            return self.utils.GREEN_STATE
+        elif up_pin_pt[1] < down_pin_pt[1] and status is None:
+            print(f"\n------ [{tab_name}] SELL ------")
+            print(f"Current Class: {current_class}")
+            print(up_pin_pt, down_pin_pt)
+            print("------------------------------\n")
+            return self.utils.PURPLE_STATE
+
+        return status  # unchanged if no condition matched
 
 
 
