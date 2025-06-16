@@ -8,7 +8,7 @@ from PIL import Image
 import pytesseract
 from PIL import Image
 import numpy as np
-from take_screenshot import TabScreenshotter
+from testing.take_screenshot import TabScreenshotter
 
 class Pandu:
     def __init__(self) -> None:
@@ -17,29 +17,22 @@ class Pandu:
         self.WIDTH = 20
         self.tab_screenshotter = TabScreenshotter()
 
-        
-
     def classify(self, img):
-        img = np.array(img)
-        img = img / 255.0
-        img = img[np.newaxis, ...]
 
-        prediction = self.utils.model.predict(img, verbose=0)
+        # Resize to model's expected input size — adjust as needed
+        img_resized = img.resize((40, 669))  # (width, height)
+        img_resized = img_resized.convert("RGB")  # ensure 3 channels
+
+        img_array = np.array(img_resized) / 255.0
+        img_array = img_array[np.newaxis, ...]
+
+        prediction = self.utils.model.predict(img_array, verbose=0)
         prediction = np.argmax(prediction)
-        if prediction == 0:
-            return 'DB'
-        elif prediction == 1:
-            return 'DT'
-        elif prediction == 2:
-            return 'HH'
-        elif prediction == 3:
-            return 'HL'
-        elif prediction == 4:
-            return 'LH'
-        # else:
-        elif prediction == 5:
-            return 'LL'
-        # return int(prediction)
+
+        classes = ['DB', 'DT', 'HH', 'HL', 'LH', 'LL']
+        return classes[prediction]
+
+
     def initial_setup(self):
         self.tab_screenshotter.run()
         #load both saved screenshots
@@ -55,7 +48,108 @@ class Pandu:
         self.top_pixel_1510 = list(map(int, self.top_pixel_1510))
         self.bottom_pixel_1510 = list(map(int, self.bottom_pixel_1510))
 
-    # def initial_setup(self):        
+
+    def run(self):
+        self.initial_setup()
+        self.utils.STATUS_3020 = None
+        self.utils.STATUS_1510 = None
+
+        region_3020 = self.tab_screenshotter.get_region("3020")
+        region_1510 = self.tab_screenshotter.get_region("1510")
+
+        screenshot_3020 = pyautogui.screenshot(region=region_3020).convert("RGB")
+        screenshot_1510 = pyautogui.screenshot(region=region_1510).convert("RGB")
+
+        self.utils.PREVIOUS_CLASS_3020 = self.classify(screenshot_3020)
+        self.utils.PREVIOUS_CLASS_1510 = self.classify(screenshot_1510)
+
+        while True:
+            # ---- Process 3020 ----
+            screenshot_3020 = pyautogui.screenshot(region=region_3020)
+            screenshot_3020.save("testing/3020.png")
+            array_3020 = np.array(screenshot_3020.convert("RGB"))
+
+            up_pin_3020 = self.utils.get_top_right(array_3020, self.utils.up_pin_point)
+            down_pin_3020 = self.utils.get_top_right(array_3020, self.utils.down_pin_point)
+
+            current_class_3020 = self.classify(screenshot_3020)
+
+            self.utils.STATUS_3020 = self._process_logic(
+                up_pin_3020,
+                down_pin_3020,
+                self.utils.PREVIOUS_CLASS_3020,
+                current_class_3020,
+                tab_name="3020",
+                status=self.utils.STATUS_3020
+            )
+
+            self.utils.PREVIOUS_CLASS_3020 = current_class_3020
+
+            # ---- Process 1510 ----
+            screenshot_1510 = pyautogui.screenshot(region=region_1510)
+            screenshot_1510.save("testing/1510.png")
+            array_1510 = np.array(screenshot_1510.convert("RGB"))
+
+            up_pin_1510 = self.utils.get_top_right(array_1510, self.utils.up_pin_point)
+            down_pin_1510 = self.utils.get_top_right(array_1510, self.utils.down_pin_point)
+
+            current_class_1510 = self.classify(screenshot_1510)
+
+            self.utils.STATUS_1510 = self._process_logic(
+                up_pin_1510,
+                down_pin_1510,
+                self.utils.PREVIOUS_CLASS_1510,
+                current_class_1510,
+                tab_name="1510",
+                status=self.utils.STATUS_1510
+            )
+
+            self.utils.PREVIOUS_CLASS_1510 = current_class_1510
+
+
+    def _process_logic(self, up_pin_pt, down_pin_pt, previous_class, current_class, tab_name, status):
+        if up_pin_pt[1] > down_pin_pt[1] and status == self.utils.PURPLE_STATE:
+            self.utils.CURRENT_PIN = self.utils.GREEN_STATE
+            if (current_class == 'HL' and previous_class in ['HH', 'LH']):
+                self.utils.buy()
+                print(f"\n------ [{tab_name}] BUY ------")
+                print(f"Prev Class: {previous_class}, Current Class: {current_class}")
+                print(up_pin_pt, down_pin_pt)
+                print("------------------------------\n")
+                return self.utils.GREEN_STATE
+        elif up_pin_pt[1] < down_pin_pt[1] and status == self.utils.GREEN_STATE:
+            self.utils.CURRENT_PIN = self.utils.PURPLE_STATE
+            if (current_class == 'LH' and previous_class in ['LL', 'HL']):
+                self.utils.sell()
+                print(f"\n------ [{tab_name}] SELL ------")
+                print(f"Prev Class: {previous_class}, Current Class: {current_class}")
+                print(up_pin_pt, down_pin_pt)
+                print("------------------------------\n")
+                return self.utils.PURPLE_STATE
+        elif up_pin_pt[1] > down_pin_pt[1] and status is None:
+            print(f"\n------ [{tab_name}] SELL ------")
+            print(f"Current Class: {current_class}")
+            print(up_pin_pt, down_pin_pt)
+            print("------------------------------\n")
+            return self.utils.GREEN_STATE
+        elif up_pin_pt[1] < down_pin_pt[1] and status is None:
+            print(f"\n------ [{tab_name}] SELL ------")
+            print(f"Current Class: {current_class}")
+            print(up_pin_pt, down_pin_pt)
+            print("------------------------------\n")
+            return self.utils.PURPLE_STATE
+
+        return status  # unchanged if no condition matched
+
+if __name__ == '__main__':
+    pandu = Pandu()
+    pandu.run()
+    # pandu.initial_setup()
+    # image = Image.open('temp.png')
+    # pandu.ocr(image)
+
+
+            # def initial_setup(self):        
     #     screen_width, screen_height = pyautogui.size()
     #     X_TOP = 0 #screen_width - 445
     #     Y_TOP = 0
@@ -167,113 +261,6 @@ class Pandu:
     #             print()
     #             self.utils.STATUS = self.utils.PURPLE_STATE
 
-    def run(self):
-        self.initial_setup()
-        # Initialize per-tab STATUS
-        self.utils.STATUS_3020 = None
-        self.utils.STATUS_1510 = None
-
-        # Take initial screenshots for both tabs and classify
-        ocr_image_3020 = pyautogui.screenshot(region=(
-            self.top_pixel_3020[1] - self.WIDTH + 5,
-            self.top_pixel_3020[0],
-            2 * self.WIDTH,
-            self.bottom_pixel_3020[0] - self.top_pixel_3020[0]
-        ))
-        ocr_image_1510 = pyautogui.screenshot(region=(
-            self.top_pixel_1510[1] - self.WIDTH + 5,
-            self.top_pixel_1510[0],
-            2 * self.WIDTH,
-            self.bottom_pixel_1510[0] - self.top_pixel_1510[0]
-        ))
-
-        self.utils.PREVIOUS_CLASS_3020 = self.classify(ocr_image_3020)
-        self.utils.PREVIOUS_CLASS_1510 = self.classify(ocr_image_1510)
-
-        while True:
-            # ---------- 3020 ----------
-            ocr_image_3020 = pyautogui.screenshot(region=(
-                self.top_pixel_3020[1] - self.WIDTH + 5,
-                self.top_pixel_3020[0],
-                2 * self.WIDTH,
-                self.bottom_pixel_3020[0] - self.top_pixel_3020[0]
-            ))
-            screenshot_array_3020 = np.array(ocr_image_3020)
-            up_pin_pt_3020 = self.utils.get_top_right(screenshot_array_3020, self.utils.up_pin_point)
-            down_pin_pt_3020 = self.utils.get_top_right(screenshot_array_3020, self.utils.down_pin_point)
-            self.utils.CURRENT_CLASS_3020 = self.classify(ocr_image_3020)
-
-            self.utils.STATUS_3020 = self._process_logic(
-                up_pin_pt_3020,
-                down_pin_pt_3020,
-                self.utils.PREVIOUS_CLASS_3020,
-                self.utils.CURRENT_CLASS_3020,
-                tab_name="3020",
-                status=self.utils.STATUS_3020
-            )
-
-            self.utils.PREVIOUS_CLASS_3020 = self.utils.CURRENT_CLASS_3020
-
-            # ---------- 1510 ----------
-            ocr_image_1510 = pyautogui.screenshot(region=(
-                self.top_pixel_1510[1] - self.WIDTH + 5,
-                self.top_pixel_1510[0],
-                2 * self.WIDTH,
-                self.bottom_pixel_1510[0] - self.top_pixel_1510[0]
-            ))
-            screenshot_array_1510 = np.array(ocr_image_1510)
-            up_pin_pt_1510 = self.utils.get_top_right(screenshot_array_1510, self.utils.up_pin_point)
-            down_pin_pt_1510 = self.utils.get_top_right(screenshot_array_1510, self.utils.down_pin_point)
-            self.utils.CURRENT_CLASS_1510 = self.classify(ocr_image_1510)
-
-            self.utils.STATUS_1510 = self._process_logic(
-                up_pin_pt_1510,
-                down_pin_pt_1510,
-                self.utils.PREVIOUS_CLASS_1510,
-                self.utils.CURRENT_CLASS_1510,
-                tab_name="1510",
-                status=self.utils.STATUS_1510
-            )
-
-            self.utils.PREVIOUS_CLASS_1510 = self.utils.CURRENT_CLASS_1510
-
-
-    def _process_logic(self, up_pin_pt, down_pin_pt, previous_class, current_class, tab_name, status):
-        if up_pin_pt[1] > down_pin_pt[1] and status == self.utils.PURPLE_STATE:
-            self.utils.CURRENT_PIN = self.utils.GREEN_STATE
-            if (current_class == 'HL' and previous_class in ['HH', 'LH']):
-                self.utils.buy()
-                print(f"\n------ [{tab_name}] BUY ------")
-                print(f"Prev Class: {previous_class}, Current Class: {current_class}")
-                print(up_pin_pt, down_pin_pt)
-                print("------------------------------\n")
-                return self.utils.GREEN_STATE
-        elif up_pin_pt[1] < down_pin_pt[1] and status == self.utils.GREEN_STATE:
-            self.utils.CURRENT_PIN = self.utils.PURPLE_STATE
-            if (current_class == 'LH' and previous_class in ['LL', 'HL']):
-                self.utils.sell()
-                print(f"\n------ [{tab_name}] SELL ------")
-                print(f"Prev Class: {previous_class}, Current Class: {current_class}")
-                print(up_pin_pt, down_pin_pt)
-                print("------------------------------\n")
-                return self.utils.PURPLE_STATE
-        elif up_pin_pt[1] > down_pin_pt[1] and status is None:
-            print(f"\n------ [{tab_name}] SELL ------")
-            print(f"Current Class: {current_class}")
-            print(up_pin_pt, down_pin_pt)
-            print("------------------------------\n")
-            return self.utils.GREEN_STATE
-        elif up_pin_pt[1] < down_pin_pt[1] and status is None:
-            print(f"\n------ [{tab_name}] SELL ------")
-            print(f"Current Class: {current_class}")
-            print(up_pin_pt, down_pin_pt)
-            print("------------------------------\n")
-            return self.utils.PURPLE_STATE
-
-        return status  # unchanged if no condition matched
-
-
-
             # if self.utils.CURRENT_CLASS != self.utils.PREVIOUS_CLASS:
             #     # print('Prev Class', self.utils.PREVIOUS_CLASS)
             #     # print('Current class', self.utils.CURRENT_CLASS)
@@ -329,11 +316,3 @@ class Pandu:
             #     # self.utils.close()
             #     # self.utils.STATUS = None
             # self.utils.PREVIOUS_CLASS = self.utils.CURRENT_CLASS
-
-
-if __name__ == '__main__':
-    pandu = Pandu()
-    pandu.run()
-    # pandu.initial_setup()
-    # image = Image.open('temp.png')
-    # pandu.ocr(image)
