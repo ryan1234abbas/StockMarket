@@ -79,13 +79,22 @@ class Utils:
         draw.ellipse((x1, y1, x2, y2), outline='red')
         image.show()
 
-    def get_top_right_x(self, screenshot_array, color):
+    # def get_top_right_x(self, screenshot_array, color):
+    #     mask = np.all(screenshot_array == color, axis=-1)
+    #     indices = np.argwhere(mask)
+    #     if len(indices) == 0:
+    #         return -1
+    #     max_index = np.argmax(indices[:, 1])
+    #     return indices[max_index][1]
+
+    def get_top_right(self, screenshot_array, color):
+        color = np.array(color[:3])  # force RGB
         mask = np.all(screenshot_array == color, axis=-1)
         indices = np.argwhere(mask)
         if len(indices) == 0:
-            return -1
+            return [-1, -1]
         max_index = np.argmax(indices[:, 1])
-        return indices[max_index][1]
+        return indices[max_index]
 
     def get_top_right(self, screenshot_array, color):
         mask = np.all(screenshot_array == color, axis=-1)
