@@ -66,8 +66,12 @@ class Pandu:
         while True:
             # ---- Process 3020 ----
             screenshot_3020 = pyautogui.screenshot(region=region_3020)
-            screenshot_3020.save("testing/3020.png")
+            # screenshot_3020.save("testing/3020.png")
+            # array_3020 = np.array(screenshot_3020.convert("RGB"))
+
             array_3020 = np.array(screenshot_3020.convert("RGB"))
+            array_3020 = self.detect_and_draw_black_candles(array_3020)  # 🔴 draw rectangles
+            cv2.imwrite("testing/3020.png", cv2.cvtColor(array_3020, cv2.COLOR_RGB2BGR))  # save with rectangles
 
             up_pin_3020 = self.utils.get_top_right(array_3020, self.utils.up_pin_point)
             down_pin_3020 = self.utils.get_top_right(array_3020, self.utils.down_pin_point)
@@ -87,8 +91,12 @@ class Pandu:
 
             # ---- Process 1510 ----
             screenshot_1510 = pyautogui.screenshot(region=region_1510)
-            screenshot_1510.save("testing/1510.png")
+            # screenshot_1510.save("testing/1510.png")
+            # array_1510 = np.array(screenshot_1510.convert("RGB"))
+
             array_1510 = np.array(screenshot_1510.convert("RGB"))
+            array_1510 = self.detect_and_draw_black_candles(array_1510)  # 🔴 draw rectangles
+            cv2.imwrite("testing/1510.png", cv2.cvtColor(array_1510, cv2.COLOR_RGB2BGR))  # save with rectangles
 
             up_pin_1510 = self.utils.get_top_right(array_1510, self.utils.up_pin_point)
             down_pin_1510 = self.utils.get_top_right(array_1510, self.utils.down_pin_point)
@@ -140,13 +148,31 @@ class Pandu:
             return self.utils.PURPLE_STATE
 
         return status  # unchanged if no condition matched
+    
+    def detect_and_draw_black_candles(self, array_rgb, hex_value="#000000", tolerance=30):
+
+        # Convert hex to BGR
+        hex_value = hex_value.lstrip("#")
+        r, g, b = int(hex_value[0:2], 16), int(hex_value[2:4], 16), int(hex_value[4:6], 16)
+        lower = np.clip([b - tolerance, g - tolerance, r - tolerance], 0, 255)
+        upper = np.clip([b + tolerance, g + tolerance, r + tolerance], 0, 255)
+
+        array_bgr = cv2.cvtColor(array_rgb, cv2.COLOR_RGB2BGR)
+        mask = cv2.inRange(array_bgr, lower, upper)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for c in contours:
+            x, y, w, h = cv2.boundingRect(c)
+            if w > 5 and h > 5:
+                cv2.rectangle(array_bgr, (x, y), (x + w, y + h), (0, 0, 255), 2)
+
+        return cv2.cvtColor(array_bgr, cv2.COLOR_BGR2RGB)
+
 
 if __name__ == '__main__':
     pandu = Pandu()
     pandu.run()
-    # pandu.initial_setup()
-    # image = Image.open('temp.png')
-    # pandu.ocr(image)
+
 
 
             # def initial_setup(self):        
