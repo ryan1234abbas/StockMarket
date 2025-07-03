@@ -1,0 +1,50 @@
+<annotation>
+	<folder>stock_market_imgs</folder>
+	<filename>Screenshot 2025-06-27 at 6.58.25 PM.png</filename>
+	<path>/Users/koshabbas/Desktop/work/stock_market_imgs/Screenshot 2025-06-27 at 6.58.25 PM.png</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>1492</width>
+		<height>926</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>candle</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>222</xmin>
+			<ymin>151</ymin>
+			<xmax>232</xmax>
+			<ymax>385</ymax>
+		</bndbox>
+	</object>
+	<object>
+		<name>candle</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>706</xmin>
+			<ymin>148</ymin>
+			<xmax>713</xmax>
+			<ymax>276</ymax>
+		</bndbox>
+	</object>
+	<object>
+		<name>candle</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>1178</xmin>
+			<ymin>695</ymin>
+			<xmax>1186</xmax>
+			<ymax>814</ymax>
+		</bndbox>
+	</object>
+</annotation>
