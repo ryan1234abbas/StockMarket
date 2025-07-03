@@ -1,0 +1,50 @@
+<annotation>
+	<folder>unchecked_stock_imgs</folder>
+	<filename>Screenshot 2025-06-28 at 4.40.08 PM.png</filename>
+	<path>/Users/koshabbas/Desktop/unchecked_stock_imgs/Screenshot 2025-06-28 at 4.40.08 PM.png</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>3162</width>
+		<height>1872</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>candle</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>804</xmin>
+			<ymin>85</ymin>
+			<xmax>832</xmax>
+			<ymax>563</ymax>
+		</bndbox>
+	</object>
+	<object>
+		<name>candle</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>1998</xmin>
+			<ymin>87</ymin>
+			<xmax>2018</xmax>
+			<ymax>459</ymax>
+		</bndbox>
+	</object>
+	<object>
+		<name>candle</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>2810</xmin>
+			<ymin>1309</ymin>
+			<xmax>2834</xmax>
+			<ymax>1671</ymax>
+		</bndbox>
+	</object>
+</annotation>
