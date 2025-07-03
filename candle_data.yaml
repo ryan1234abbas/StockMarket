@@ -1,0 +1,5 @@
+train: /Users/koshabbas/Desktop/work/stock_market/images/train
+val: /Users/koshabbas/Desktop/work/stock_market/images/val
+
+nc: 1
+names: [candle]
