@@ -10,7 +10,7 @@ def execute_model():
     #data='/Users/koshabbas/Desktop/work/stock_market/candle_data.yaml',
     data='/Users/ryanabbas/Desktop/work/StockMarket/candle_data.yaml',
     model='yolov8m.pt',
-    epochs=100,
+    epochs=90,
     imgsz=1024,
     batch=16,
     name='train_17',
@@ -20,7 +20,7 @@ def execute_model():
     lr0=0.001,
     patience=15,
     augment=True,
-    scale=0.75,           # Allow zoom-in/out
+    scale=0.5,           # Allow zoom-in/out
     translate=0.05,       # Slight vertical/horizontal shift
     perspective=0.0,      # Keep candle shape stable
     shear=0.0,            # Don't shear candles
@@ -32,7 +32,7 @@ def execute_model():
     save=True,
     save_period=10,
     verbose=True,
-    workers=2,
+    workers=4,
     plots=False
     )
 
