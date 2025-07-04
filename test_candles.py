@@ -7,13 +7,15 @@ def execute_model():
 
     # Train the model
     yolo_model.train(
-    data='/Users/koshabbas/Desktop/work/stock_market/candle_data.yaml',
+    #data='/Users/koshabbas/Desktop/work/stock_market/candle_data.yaml',
+    data='/Users/ryanabbas/Desktop/work/StockMarket/candle_data.yaml',
     model='yolov8m.pt',
     epochs=100,
-    imgsz=1280,
+    imgsz=1024,
     batch=16,
-    name='train_full_candle_v1',
-    device='cpu',  
+    name='train_17',
+    #device='cpu',  
+    device='mps',
     optimizer='AdamW',
     lr0=0.001,
     patience=15,
