@@ -36,7 +36,6 @@ def execute_model():
     workers=4,
     plots=False,
     amp=True,
-    val_interval=5  # validate every 5 epochs
     )
 
 def asses_performance(model):
