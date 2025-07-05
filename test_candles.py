@@ -8,16 +8,17 @@ def execute_model():
     # Train the model
     yolo_model.train(
     #data='/Users/koshabbas/Desktop/work/stock_market/candle_data.yaml',
-    data='/Users/ryanabbas/Desktop/work/StockMarket/candle_data.yaml',
+    #data='/Users/ryanabbas/Desktop/work/StockMarket/candle_data.yaml',
+    data='candle_data.yaml',
     model='yolov8m.pt',
-    epochs=90,
-    imgsz=1024,
+    epochs=100,
+    imgsz=1280,
     batch=16,
-    name='train_17',
+    name='train_18',
     #device='cpu',  
-    device='mps',
+    device='cuda',
     optimizer='AdamW',
-    lr0=0.001,
+    lr0=0.1,
     patience=15,
     augment=True,
     scale=0.5,           # Allow zoom-in/out
@@ -33,7 +34,9 @@ def execute_model():
     save_period=10,
     verbose=True,
     workers=4,
-    plots=False
+    plots=False,
+    amp=True,
+    val_interval=5  # validate every 5 epochs
     )
 
 def asses_performance(model):
