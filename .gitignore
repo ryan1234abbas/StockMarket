@@ -163,5 +163,4 @@ cython_debug/
 dataset/
 labelImg/
 *.npy
-*.npy
 runs/detect/train_17/
