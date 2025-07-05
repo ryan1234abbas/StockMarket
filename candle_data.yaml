@@ -4,8 +4,8 @@
 #train: '/Users/ryanabbas/Desktop/work/StockMarket/images/train'
 #val: '/Users/ryanabbas/Desktop/work/StockMarket/images/val'
 
-train:'images/train'
-val:'images/val'
+train: 'images/train'
+val: 'images/val'
 
 nc: 1
 names: [candle]
