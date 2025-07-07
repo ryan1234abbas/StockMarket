@@ -1,95 +1,81 @@
+import sys
 import time
-import cv2
 import numpy as np
-from PIL import Image
-from take_screenshot import TabScreenshotter
+import pyautogui
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import QTimer
 from ultralytics import YOLO
+from replica_screen import ReplicaScreen
+import cv2
 
 
 class MarketWorker:
     def __init__(self):
-        self.tab_screenshotter = TabScreenshotter()
-        self.model = YOLO("/Users/koshabbas/Desktop/work/stock_market/detect/train_run165/weights/best.pt")
+        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_185/weights/best.pt')
+        self.app = QApplication.instance() or QApplication(sys.argv)
 
-    def run(self, duration_minutes=20, fps=1):
-        print("Started screenshotting and detection loop.")
+        # Region to capture — must match your replica screen's position and size exactly
+        self.offset_x = 100
+        self.offset_y = 120
+        self.width = 700
+        self.height = 410
+        self.region = (self.offset_x, self.offset_y, self.width, self.height)
 
-        # Get frame size from an initial screenshot
-        initial_img = self.tab_screenshotter.capture_screenshot("3020")
-        if initial_img is None:
-            print("Failed to capture initial screenshot.")
+        # Create replica screen (display-only)
+        self.replica = ReplicaScreen(self.offset_x, self.offset_y, self.width, self.height)
+
+        self.frame_count = 0
+        self.total_frames = 20 * 60 * 1  # e.g. 20 minutes at 1 fps
+
+        # Start detection loop ASAP
+        QTimer.singleShot(0, self.run_detection_loop)
+
+    def run_detection_loop(self):
+        if self.frame_count >= self.total_frames:
+            print("Finished processing frames.")
             return
 
-        width, height = initial_img.size
-        frame_size = (width, height)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out_3020 = cv2.VideoWriter("3020_output.mp4", fourcc, fps, frame_size)
-        out_1510 = cv2.VideoWriter("1510_output.mp4", fourcc, fps, frame_size)
+        start_time = time.time()
 
-        total_frames = duration_minutes * 60 * fps
-        frame_count = 0
+        # Take screenshot of region
+        screenshot = pyautogui.screenshot(region=self.region)
+        img_np = np.array(screenshot.convert("RGB"))
 
-        try:
-            while frame_count < total_frames:
-                start_time = time.time()
+        # Run model prediction
+        results = self.model.predict(source=img_np, conf=0.1, iou=0.15, imgsz=(self.width, self.height))
 
-                for tab, writer in [("3020", out_3020), ("1510", out_1510)]:
-                    img = self.tab_screenshotter.capture_screenshot(tab)
-                    if img is None:
-                        print(f"Could not capture screenshot for tab {tab}")
-                        continue
+        boxes, scores = [], []
+        for result in results:
+            for box in result.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                if (x2 - x1) < 4 or (y2 - y1) < 20:
+                    continue
+                conf = box.conf[0].item()
+                boxes.append([x1, y1, x2, y2])
+                scores.append(conf)
 
-                    img_np = np.array(img.convert("RGB"))
-                    results = self.model.predict(source=img_np, conf=0.1, iou=0.1, imgsz=1024)
-                    frame = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        keep = self.non_max_suppression_fast(boxes, scores, iou_thresh=0.5)
+        filtered_boxes = [boxes[i] for i in keep]
+        merged_boxes = self.merge_vertically_close_boxes(filtered_boxes)
 
-                    boxes, scores = [], []
-                    for result in results:
-                        for box in result.boxes:
-                            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                            if (x2 - x1) < 5 or (y2 - y1) < 15: continue
-                            conf = box.conf[0].item()
-                            boxes.append([x1, y1, x2, y2])
-                            scores.append(conf)
+        # Send frame + boxes to replica screen for display
+        self.replica.update_image_with_boxes(img_np, merged_boxes)
 
-                    keep = self.non_max_suppression_fast(boxes, scores, iou_thresh=0.3)
-                    filtered_boxes = [boxes[i] for i in keep]
-                    merged_boxes = self.merge_vertically_close_boxes(filtered_boxes)
+        self.frame_count += 1
 
-                    for x1, y1, x2, y2 in merged_boxes:
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        cv2.putText(frame, "candle", (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        elapsed = time.time() - start_time
+        print(f"Frame {self.frame_count}/{self.total_frames} processed in {elapsed:.2f} seconds.")
 
-                    writer.write(frame)
-                    print(f"[{tab}] Frame {frame_count+1} | Raw: {len(boxes)}, Final: {len(merged_boxes)}")
-
-                frame_count += 1
-                time.sleep(max(0, (1.0 / fps) - (time.time() - start_time)))
-
-        except KeyboardInterrupt:
-            print("Interrupted by user.")
-
-        finally:
-            out_3020.release()
-            out_1510.release()
-            print("Video writers released.")
+        # Run next detection ASAP (give control back to Qt event loop)
+        QTimer.singleShot(0, self.run_detection_loop)
 
     def non_max_suppression_fast(self, boxes, scores, iou_thresh=0.4):
-        if len(boxes) == 0:
+        if not boxes:
             return []
-
         boxes = np.array(boxes)
-        if boxes.ndim == 1:
-            boxes = boxes.reshape(1, -1)  # shape (1,4)
-
         scores = np.array(scores)
 
-        x1 = boxes[:, 0]
-        y1 = boxes[:, 1]
-        x2 = boxes[:, 2]
-        y2 = boxes[:, 3]
-
+        x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
         areas = (x2 - x1 + 1) * (y2 - y1 + 1)
         order = scores.argsort()[::-1]
 
@@ -113,7 +99,6 @@ class MarketWorker:
 
         return keep
 
-
     def merge_vertically_close_boxes(self, boxes, y_thresh=30, x_thresh=15):
         merged = []
         used = set()
@@ -127,12 +112,11 @@ class MarketWorker:
                 if j <= i or j in used:
                     continue
                 x1b, y1b, x2b, y2b = box2
-                # Check for vertical overlap and aligned x
                 if abs(x1a - x1b) < x_thresh and abs(x2a - x2b) < x_thresh:
                     if abs(y1a - y2b) < y_thresh or abs(y2a - y1b) < y_thresh:
                         group.append(box2)
                         used.add(j)
-            # Merge group
+
             xs = [b[0] for b in group] + [b[2] for b in group]
             ys = [b[1] for b in group] + [b[3] for b in group]
             merged.append([min(xs), min(ys), max(xs), max(ys)])
@@ -140,14 +124,88 @@ class MarketWorker:
 
         return merged
 
-
-
 if __name__ == "__main__":
     mw = MarketWorker()
-    mw.run()
+    sys.exit(mw.app.exec_())
 
 
-#Use for detecting each frame
+
+'''Use for overlaying models prediction on live screen'''
+    # def run(self, duration_minutes=20, fps=1):
+    #     print("Started screenshotting and detection loop.")
+    #     total_frames = duration_minutes * 60 * fps
+    #     frame_count = 0
+
+    #     try:
+    #         while frame_count < total_frames:
+    #             start_time = time.time()
+
+    #             all_boxes = []
+    #             for tab in ["3020", "1510"]:
+    #                 img = self.tab_screenshotter.capture_screenshot(tab)
+    #                 if img is None:
+    #                     print(f"Could not capture screenshot for tab {tab}")
+    #                     continue
+
+    #                 img_np = np.array(img.convert("RGB"))
+    #                 original_w, original_h = img.size
+
+    #                 results = self.model.predict(source=img_np, conf=0.2, iou=0.1)
+                    
+    #                 boxes, scores = [], []
+    #                 for result in results:
+    #                     # YOLO’s resized input size for this image (width, height)
+    #                     pred_w, pred_h = result.orig_shape[1], result.orig_shape[0]
+
+    #                     for box in result.boxes:
+    #                         x1, y1, x2, y2 = box.xyxy[0].tolist()
+    #                         conf = box.conf[0].item()
+
+    #                         # Filter out very small boxes
+    #                         if (x2 - x1) < 4 or (y2 - y1) < 20:
+    #                             continue
+
+    #                         # Rescale coords from resized image to original screenshot size
+    #                         x1 = x1 * original_w / pred_w
+    #                         x2 = x2 * original_w / pred_w
+    #                         y1 = y1 * original_h / pred_h
+    #                         y2 = y2 * original_h / pred_h
+
+    #                         boxes.append([int(x1), int(y1), int(x2), int(y2)])
+    #                         scores.append(conf)
+
+    #                 keep = self.non_max_suppression_fast(boxes, scores, iou_thresh=0.3)
+    #                 filtered_boxes = [boxes[i] for i in keep]
+
+    #                 merged_boxes = self.merge_vertically_close_boxes(filtered_boxes)
+                  
+    #                 offset_x, offset_y = self.tab_screenshotter.get_tab_offset(tab)  # you implement this
+    #                 # Adjust boxes to be relative to full screen
+    #                 adjusted_boxes = []
+    #                 for x1, y1, x2, y2 in merged_boxes:
+    #                     adjusted_boxes.append([
+    #                         x1 + offset_x,
+    #                         y1 + offset_y,
+    #                         x2 + offset_x,
+    #                         y2 + offset_y,
+    #                     ])
+
+    #                 all_boxes.extend(merged_boxes)
+
+    #                 print(f"[{tab}] Frame {frame_count + 1} | Raw: {len(boxes)}, Final: {len(merged_boxes)}")
+
+    #             self.overlay.update_boxes(all_boxes)
+    #             self.overlay.raise_()  # Keeps overlay above other windows
+
+    #             frame_count += 1
+    #             time.sleep(max(0, (1.0 / fps) - (time.time() - start_time)))
+
+    #     except KeyboardInterrupt:
+    #         print("Stopped by user.")
+
+
+
+'''Use for detecting each frame'''
     # def run(self):
     #     print("Started screenshotting and detection loop.")
 

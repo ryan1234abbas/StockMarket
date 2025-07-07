@@ -25,6 +25,14 @@ class TabScreenshotter:
 
         return (x, y, width, height)
 
+    def get_tab_offset(self, tab_name):
+        if tab_name == "3020":
+            return 100, 150  # example: left=100px, top=150px
+        elif tab_name == "1510":
+            return 300, 150
+        return 0, 0
+
+    
     def capture_screenshot(self, tab_name):
         region = self.get_region(tab_name)
         screenshot = pyautogui.screenshot(region=region)
