@@ -32,10 +32,8 @@ class Overlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # ✅ Fully transparent background
         painter.fillRect(self.rect(), Qt.transparent)
 
-        # ✅ Green outline for boxes
         painter.setPen(QPen(QColor(0, 255, 0, 200), 2))
         painter.setBrush(Qt.NoBrush)
 

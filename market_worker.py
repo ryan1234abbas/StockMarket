@@ -7,6 +7,8 @@ from PyQt5.QtCore import QTimer
 from ultralytics import YOLO
 from replica_screen import ReplicaScreen
 import cv2
+import mss
+import numpy as np
 
 
 class MarketWorker:
@@ -29,7 +31,15 @@ class MarketWorker:
 
         # Start detection loop ASAP
         QTimer.singleShot(0, self.run_detection_loop)
+        self.sct = mss.mss()
 
+    def fast_screenshot(self):
+        x, y, w, h = self.region
+        monitor = {"top": y, "left": x, "width": w, "height": h}
+        img = np.array(self.sct.grab(monitor))
+        return img[..., :3]  # Remove alpha channel
+
+    
     def run_detection_loop(self):
         if self.frame_count >= self.total_frames:
             print("Finished processing frames.")
@@ -37,12 +47,17 @@ class MarketWorker:
 
         start_time = time.time()
 
-        # Take screenshot of region
-        screenshot = pyautogui.screenshot(region=self.region)
-        img_np = np.array(screenshot.convert("RGB"))
+        # Fast screenshot using mss
+        monitor = {
+            "top": self.offset_y,
+            "left": self.offset_x,
+            "width": self.width,
+            "height": self.height
+        }
+        img_np = np.array(self.sct.grab(monitor))[:, :, :3]  # Drop alpha channel
 
         # Run model prediction
-        results = self.model.predict(source=img_np, conf=0.1, iou=0.15, imgsz=(self.width, self.height))
+        results = self.model.predict(source=img_np, conf=0.05, iou=0.15, imgsz=(self.width, self.height))
 
         boxes, scores = [], []
         for result in results:
@@ -58,16 +73,15 @@ class MarketWorker:
         filtered_boxes = [boxes[i] for i in keep]
         merged_boxes = self.merge_vertically_close_boxes(filtered_boxes)
 
-        # Send frame + boxes to replica screen for display
+        # Update replica with new image and boxes
         self.replica.update_image_with_boxes(img_np, merged_boxes)
 
         self.frame_count += 1
-
         elapsed = time.time() - start_time
         print(f"Frame {self.frame_count}/{self.total_frames} processed in {elapsed:.2f} seconds.")
 
-        # Run next detection ASAP (give control back to Qt event loop)
         QTimer.singleShot(0, self.run_detection_loop)
+
 
     def non_max_suppression_fast(self, boxes, scores, iou_thresh=0.4):
         if not boxes:
