@@ -12,7 +12,7 @@ def execute_model():
     data='candle_data.yaml',
     model='yolov8m.pt',
     epochs=100,
-    imgsz=1280,
+    imgsz=1344,
     batch=16,
     name='train_19',
     #device='cpu',  
