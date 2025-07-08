@@ -13,7 +13,7 @@ def execute_model():
     model='yolov8m.pt',
     epochs=100,
     imgsz=1344,
-    batch=16,
+    batch=8,
     name='train_19',
     #device='cpu',  
     device='cuda',
