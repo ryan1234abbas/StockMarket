@@ -5,13 +5,13 @@ from PyQt5.QtCore import Qt
 import cv2
 
 class ReplicaScreen(QWidget):
-    def __init__(self, offset_x, offset_y, width, height):
+    def __init__(self, offset_x, offset_y, width, height,title="Replica Screen"):
         super().__init__()
         self.region = (offset_x, offset_y, width, height)
         self.boxes = []
         self.label = QLabel(self)
         self.setGeometry(offset_x, offset_y, width, height)
-        self.setWindowTitle("Replica Screen")
+        self.setWindowTitle(title)
         # You can optionally call resize here to width/height if you want fixed
         self.resize(width, height)
         self.show()

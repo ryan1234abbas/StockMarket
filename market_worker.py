@@ -13,7 +13,7 @@ import numpy as np
 
 class MarketWorker:
     def __init__(self):
-        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_185/weights/best.pt')
+        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         self.app = QApplication.instance() or QApplication(sys.argv)
 
         # Region to capture — must match your replica screen's position and size exactly
@@ -23,9 +23,13 @@ class MarketWorker:
         self.height = 410
         self.region = (self.offset_x, self.offset_y, self.width, self.height)
 
-        # Create replica screen (display-only)
-        self.replica = ReplicaScreen(self.offset_x, self.offset_y, self.width, self.height)
+        # Create 2 replica screens 
+        #self.replica = ReplicaScreen(self.offset_x, self.offset_y, self.width, self.height)
+        self.left_replica = ReplicaScreen(100, 120, 700, 410, title="3020")
+        self.right_replica = ReplicaScreen(850, 120, 700, 410, title="1510")
 
+        '''modify the replica screen dimensions'''
+        
         self.frame_count = 0
         self.total_frames = 20 * 60 * 1  # e.g. 20 minutes at 1 fps
 
@@ -74,8 +78,12 @@ class MarketWorker:
         merged_boxes = self.merge_vertically_close_boxes(filtered_boxes)
 
         # Update replica with new image and boxes
-        self.replica.update_image_with_boxes(img_np, merged_boxes)
+        #self.replica.update_image_with_boxes(img_np, merged_boxes)
+        self.left_replica.update_image_with_boxes(img_np, merged_boxes)
+        self.right_replica.update_image_with_boxes(img_np, merged_boxes)
 
+        
+        
         self.frame_count += 1
         elapsed = time.time() - start_time
         print(f"Frame {self.frame_count}/{self.total_frames} processed in {elapsed:.2f} seconds.")
@@ -137,7 +145,10 @@ class MarketWorker:
             used.add(i)
 
         return merged
-
+    
+'''
+run two separate replica for 1510 and 3020
+'''
 if __name__ == "__main__":
     mw = MarketWorker()
     sys.exit(mw.app.exec_())
