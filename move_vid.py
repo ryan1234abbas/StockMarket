@@ -7,7 +7,7 @@ tell application "System Events"
         set frontmost to true
         tell window 1
             set position to {0, 0}
-            set size to {1500, 1500}
+            set size to {1300, 1300}
         end tell
     end tell
 end tell'
