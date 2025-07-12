@@ -6,6 +6,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from ultralytics import YOLO
 from replica_screen import ReplicaScreen
 import mss
+import cv2
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
     update_right = pyqtSignal(np.ndarray, list)
@@ -68,7 +69,25 @@ class DetectionWorker(QThread):
 
             keep_right = self.non_max_suppression_fast(right_boxes, right_scores, iou_thresh=0.5)
             merged_right = self.merge_vertically_close_boxes([right_boxes[i] for i in keep_right])
+            
+            #print each box's top left (x0,y0) coordinates
+            
+            #3020 
+            top_left_coords_3020 = sorted([(box[0], box[1]) for box in merged_left], key=lambda c: c[0])
+            print("3020:", top_left_coords_3020)
 
+            #1510 
+            top_left_coords_1510 = sorted([(box[0], box[1]) for box in merged_right], key=lambda c: c[0])
+            print("1510:", top_left_coords_1510)
+
+            self.update_left.emit(left_img, merged_left)
+            self.update_right.emit(right_img, merged_right)
+            
+            #draw coordinates
+            left_img = self.draw_coords_only(left_img, merged_left)
+            right_img = self.draw_coords_only(right_img, merged_right)
+
+            # Emit images with coordinate overlays
             self.update_left.emit(left_img, merged_left)
             self.update_right.emit(right_img, merged_right)
 
@@ -87,7 +106,27 @@ class DetectionWorker(QThread):
                     continue
                 boxes.append([x1, y1, x2, y2])
                 scores.append(box.conf[0].item())
+        #print("Detected boxes:", boxes)
         return boxes, scores
+    
+    def draw_coords_only(self, img, boxes):
+        img = img.astype(np.uint8).copy()
+        for box in boxes:
+            x1, y1, x2, y2 = box
+            # Text for each corner
+            top_left = f"({x1},{y1})"
+            top_right = f"({x2},{y1})"
+            bottom_left = f"({x1},{y2})"
+            bottom_right = f"({x2},{y2})"
+
+            # Put text near each corner (adjust offsets so text doesn't overlap box edges)
+            cv2.putText(img, top_left, (x1 - 40, y1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+            # cv2.putText(img, top_right, (x2 + 5, y1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+            # cv2.putText(img, bottom_left, (x1 - 40, y2 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+            # cv2.putText(img, bottom_right, (x2 + 5, y2 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+
+        return img
+
 
     def non_max_suppression_fast(self, boxes, scores, iou_thresh=0.4):
         if not boxes:
