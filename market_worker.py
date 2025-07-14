@@ -27,102 +27,211 @@ class DetectionWorker(QThread):
         self.frame_count = 0
         self.sct = mss.mss()
         self.running = True
+        self.templates = {}
+        for lbl in ("HH", "LL", "HL", "LH"):
+            tmpl = cv2.imread(f"templates/{lbl}.png", cv2.IMREAD_GRAYSCALE)
+            if tmpl is None:
+                raise FileNotFoundError(f"Template {lbl}.png missing in templates/")
+            self.templates[lbl] = tmpl
 
-    def analyze_candles_ocr(self, left_img, merged_left, right_img, merged_right):
+    def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right, templates, threshold=0.8, w_crop=130, h_crop=100):
         save_folder = "dummy"
         os.makedirs(save_folder, exist_ok=True)
 
         debug_3020 = left_img.copy()
         debug_1510 = right_img.copy()
 
-        w_crop, h_crop = 130, 100
+        img_h, img_w = left_img.shape[:2]
+
+        # Sort left candles left-to-right by x0
+        left_sorted = sorted(merged_left, key=lambda b: b[0])
+
+        # For left_img candles: decide above/below for cropping based on relative y positions
+        prev_y = None
         found_3020 = None
-        found_1510 = None
+        for idx, (x0, y0, x1, y1) in enumerate(left_sorted):
+            xc = (x0 + x1) // 2
+            x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
 
-        #custom_config = r'--oem 3 --psm 3'
-        custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=HL'
+            patches = []
+            boxes = []
 
-        # Process 3020 candles
-        for idx, box in enumerate(merged_left):
-            x1, y1, x2, y2 = box
-            xc = (x1 + x2) // 2
-            x_left = max(0, min(debug_3020.shape[1] - w_crop, xc - w_crop // 2))
-            y_above = max(0, y1 - h_crop)
-            y_below = min(debug_3020.shape[0] - h_crop, y2)
+            if idx == 0:
+                # First candle: crop both above and below
+                y_above = max(0, y0 - h_crop)
+                y_below = min(img_h - h_crop, y1)
+                patches.append(('above', left_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()))
+                patches.append(('below', left_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()))
+                boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
+                boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
+                prev_y = y0
+            else:
+                if y0 < prev_y:
+                    # Higher candle than previous → box above only
+                    y_above = max(0, y0 - h_crop)
+                    patches.append(('above', left_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()))
+                    boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
+                else:
+                    # Lower or equal candle → box below only
+                    y_below = min(img_h - h_crop, y1)
+                    patches.append(('below', left_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()))
+                    boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
+                prev_y = y0
 
-            # Draw rectangles for debug
-            cv2.rectangle(debug_3020, (x_left, y_above), (x_left + w_crop, y_above + h_crop), (0, 255, 0), 2)
-            cv2.rectangle(debug_3020, (x_left, y_below), (x_left + w_crop, y_below + h_crop), (0, 0, 255), 2)
+            # Draw debug boxes for left_img
+            for (x1_, y1_, x2_, y2_) in boxes:
+                color = (0, 255, 0) if y1_ < y2_ and 'above' in [p[0] for p in patches] else (0, 0, 255)
+                cv2.rectangle(debug_3020, (x1_, y1_), (x2_, y2_), color, 2)
 
-            patch_above = left_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()
-            patch_below = left_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()
-
-            text_above = pytesseract.image_to_string(patch_above, config=custom_config).upper().strip()
-            text_below = pytesseract.image_to_string(patch_below, config=custom_config).upper().strip()
-            combined_text = text_above + " " + text_below
-
-            print(f"3020 candle {idx + 1} - Extracted text above: '{text_above}'")
-            print(f"3020 candle {idx + 1} - Extracted text below: '{text_below}'")
-
-            # Debug save patches (optional)
-            cv2.imwrite(f"{save_folder}/3020_candle{idx+1}_above.png", patch_above)
-            cv2.imwrite(f"{save_folder}/3020_candle{idx+1}_below.png", patch_below)
-
-            if re.search(r'\b(HH|LL)\b', combined_text):
-                found_3020 = re.search(r'\b(HH|LL)\b', combined_text).group(0)
-                print(f"3020 candle {idx + 1} OCR text: {found_3020}")
+            # Template matching for left_img candle patches (only HH, LL)
+            for pos, patch in patches:
+                patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+                for lbl in ("HH", "LL"):
+                    tmpl = templates.get(lbl)
+                    if tmpl is None:
+                        continue
+                    res = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
+                    max_val = res.max()
+                    if max_val >= threshold:
+                        print(f"3020 candle {idx + 1} matched {lbl} ({pos}) with confidence {max_val:.2f}")
+                        found_3020 = lbl
+                        break
+                if found_3020:
+                    break
+            if found_3020:
                 break
             else:
-                print(f"No HH or LL found in 3020 candle {idx + 1}")
+                print(f"3020 candle {idx + 1} no HH or LL match found")
 
         if not found_3020:
-            print("No HH or LL found on 3020 side; skipping 1510 OCR.")
+            print("No HH or LL found in 3020 candles; skipping 1510 analysis.")
             cv2.imwrite(os.path.join(save_folder, "debug_3020.png"), debug_3020)
             cv2.imwrite(os.path.join(save_folder, "debug_1510.png"), debug_1510)
             return None
 
-        # Process 1510 candles
-        for idx, box in enumerate(merged_right):
-            x1, y1, x2, y2 = box
-            xc = (x1 + x2) // 2
-            x_left = max(0, min(debug_1510.shape[1] - w_crop, xc - w_crop // 2))
-            y_above = max(0, y1 - h_crop)
-            y_below = min(debug_1510.shape[0] - h_crop, y2)
+        # Repeat similar logic for right_img candles (HL, LH), relative y position decides above or below box
+        img_h2, img_w2 = right_img.shape[:2]
+        right_sorted = sorted(merged_right, key=lambda b: b[0])
+        prev_y2 = None
+        found_1510 = None
 
-            cv2.rectangle(debug_1510, (x_left, y_above), (x_left + w_crop, y_above + h_crop), (0, 255, 0), 2)
-            cv2.rectangle(debug_1510, (x_left, y_below), (x_left + w_crop, y_below + h_crop), (0, 0, 255), 2)
+        for idx, (x0, y0, x1, y1) in enumerate(right_sorted):
+            xc = (x0 + x1) // 2
+            x_left = max(0, min(img_w2 - w_crop, xc - w_crop // 2))
 
-            patch_above = right_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()
-            patch_below = right_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()
+            patches = []
+            boxes = []
 
-            text_above = pytesseract.image_to_string(patch_above, config=custom_config).upper().strip()
-            text_below = pytesseract.image_to_string(patch_below, config=custom_config).upper().strip()
-            combined_text = text_above + " " + text_below
+            if idx == 0:
+                y_above = max(0, y0 - h_crop)
+                y_below = min(img_h2 - h_crop, y1)
+                patches.append(('above', right_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()))
+                patches.append(('below', right_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()))
+                boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
+                boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
+                prev_y2 = y0
+            else:
+                if y0 < prev_y2:
+                    y_above = max(0, y0 - h_crop)
+                    patches.append(('above', right_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()))
+                    boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
+                else:
+                    y_below = min(img_h2 - h_crop, y1)
+                    patches.append(('below', right_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()))
+                    boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
+                prev_y2 = y0
 
-            print(f"1510 candle {idx + 1} - Extracted text above: '{text_above}'")
-            print(f"1510 candle {idx + 1} - Extracted text below: '{text_below}'")
+            # Draw debug boxes for right_img
+            for (x1_, y1_, x2_, y2_) in boxes:
+                color = (0, 255, 0) if y1_ < y2_ and 'above' in [p[0] for p in patches] else (0, 0, 255)
+                cv2.rectangle(debug_1510, (x1_, y1_), (x2_, y2_), color, 2)
 
-            cv2.imwrite(f"{save_folder}/1510_candle{idx+1}_above.png", patch_above)
-            cv2.imwrite(f"{save_folder}/1510_candle{idx+1}_below.png", patch_below)
-
-            if re.search(r'\b(HL|LH)\b', combined_text):
-                found_1510 = re.search(r'\b(HL|LH)\b', combined_text).group(0)
-                print(f"1510 candle {idx + 1} OCR text: {found_1510}")
+            # Template matching for right_img candle patches (only HL, LH)
+            for pos, patch in patches:
+                patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+                for lbl in ("HL", "LH"):
+                    tmpl = templates.get(lbl)
+                    if tmpl is None:
+                        continue
+                    res = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
+                    max_val = res.max()
+                    if max_val >= threshold:
+                        print(f"1510 candle {idx + 1} matched {lbl} ({pos}) with confidence {max_val:.2f}")
+                        found_1510 = lbl
+                        break
+                if found_1510:
+                    break
+            if found_1510:
                 break
             else:
-                print(f"No HL or LH found in 1510 candle {idx + 1}")
+                print(f"1510 candle {idx + 1} no HL or LH match found")
 
         cv2.imwrite(os.path.join(save_folder, "debug_3020.png"), debug_3020)
         cv2.imwrite(os.path.join(save_folder, "debug_1510.png"), debug_1510)
 
+        # Buy/sell logic
         if found_3020 == "HH" and found_1510 == "HL":
+            print("Decision: BUY")
             return "BUY"
         elif found_3020 == "LL" and found_1510 == "LH":
+            print("Decision: SELL")
             return "SELL"
         else:
+            print(f"No trade decision based on found labels: 3020={found_3020}, 1510={found_1510}")
             return None
 
-       
+
+
+    def analyze_candles_dynamic(self, img, coords, w_crop=130, h_crop=100):
+        img_h, img_w = img.shape[:2]
+        patches_per_candle = []  # to store cropped patches and positions for debug
+
+        coords_sorted = sorted(coords, key=lambda b: b[0])  # sort by x0 (left edge)
+
+        prev_y = None
+        for idx, (x0, y0, x1, y1) in enumerate(coords_sorted):
+            xc = (x0 + x1) // 2
+            x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
+
+            if idx == 0:
+                # First candle gets both above and below
+                y_above = max(0, y0 - h_crop)
+                y_below = min(img_h - h_crop, y1)
+                patch_above = img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()
+                patch_below = img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()
+                patches_per_candle.append({
+                    'candle_idx': idx,
+                    'above': patch_above,
+                    'below': patch_below,
+                    'boxes': ((x_left, y_above, x_left + w_crop, y_above + h_crop),
+                            (x_left, y_below, x_left + w_crop, y_below + h_crop))
+                })
+                prev_y = y0
+            else:
+                # For subsequent candles, compare y0 (top y)
+                if y0 < prev_y:
+                    # current candle visually higher → crop above only
+                    y_above = max(0, y0 - h_crop)
+                    patch_above = img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()
+                    patches_per_candle.append({
+                        'candle_idx': idx,
+                        'above': patch_above,
+                        'boxes': ((x_left, y_above, x_left + w_crop, y_above + h_crop),)
+                    })
+                else:
+                    # current candle visually lower or equal → crop below only
+                    y_below = min(img_h - h_crop, y1)
+                    patch_below = img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()
+                    patches_per_candle.append({
+                        'candle_idx': idx,
+                        'below': patch_below,
+                        'boxes': ((x_left, y_below, x_left + w_crop, y_below + h_crop),)
+                    })
+                prev_y = y0
+
+        return patches_per_candle
+
+    
     def preprocess_for_ocr(patch):
         # Convert to grayscale
         gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
@@ -130,6 +239,17 @@ class DetectionWorker(QThread):
         _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         # Optionally dilate or erode here if needed
         return thresh
+    
+    def classify_patch(self, patch_bgr):
+        gray = cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2GRAY)
+        best_lbl, best_val = None, 0.0
+        for lbl, tmpl in self.templates.items():
+            res = cv2.matchTemplate(gray, tmpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            if max_val > best_val:
+                best_lbl, best_val = lbl, max_val
+        return best_lbl if best_val >= self.thresh else None, best_val
+
     
     def crop(self,
             img: np.ndarray,
@@ -166,7 +286,6 @@ class DetectionWorker(QThread):
 
         return img[top:bottom, left:right].copy()
 
-
     def run(self):
         zoom = 0.6
         while self.running:
@@ -202,12 +321,11 @@ class DetectionWorker(QThread):
             m32 = lambda v: ((v + 31) // 32) * 32
             left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
             right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
-        
-            
+
             left_results = self.model.predict(
-                source=left_img, verbose=False, stream=False,conf=0.01, iou=0.15, imgsz=(left_sz))
+                source=left_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=left_sz)
             right_results = self.model.predict(
-                source=right_img,verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=(right_sz))
+                source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
 
             left_boxes, left_scores = self.process_results(left_results)
             right_boxes, right_scores = self.process_results(right_results)
@@ -218,14 +336,17 @@ class DetectionWorker(QThread):
             keep_right = self.non_max_suppression_fast(right_boxes, right_scores, iou_thresh=0.5)
             merged_right = self.merge_vertically_close_boxes([right_boxes[i] for i in keep_right])
 
-            decision = self.analyze_candles_ocr(left_img, merged_left, right_img, merged_right)
+            # Call analyze_candles_tm with all required args
+            decision = self.analyze_candles_tm(left_img, merged_left, right_img, merged_right, self.templates)
+
             if decision:
-                print(decision)
-            #draw coordinates
+                print(f"Trade decision: {decision}")
+
+            # Draw bounding boxes on images for visualization
             left_img = self.draw_coords_only(left_img, merged_left)
             right_img = self.draw_coords_only(right_img, merged_right)
 
-            # Emit images with coordinate overlays
+            # Emit updated images with bounding boxes
             self.update_left.emit(left_img, merged_left)
             self.update_right.emit(right_img, merged_right)
 
@@ -233,6 +354,8 @@ class DetectionWorker(QThread):
             print(f"\nFrame {self.frame_count} processed in {time.time() - start_time:.2f} sec.")
 
         self.finished.emit()
+
+
 
     def process_results(self, results):
         boxes = []
@@ -374,3 +497,4 @@ class MarketWorker:
 if __name__ == "__main__":
     mw = MarketWorker()
     sys.exit(mw.app.exec_())
+    
