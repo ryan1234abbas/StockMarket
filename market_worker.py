@@ -10,7 +10,7 @@ import cv2
 import pytesseract
 import re
 import os
-
+import pyautogui
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
     update_right = pyqtSignal(np.ndarray, list)
@@ -27,6 +27,13 @@ class DetectionWorker(QThread):
         self.frame_count = 0
         self.sct = mss.mss()
         self.running = True
+        self.prev_hhll_label   = None   # last HH or LL actually traded
+        self.prev_hhll_box_id  = None   # (x0,y0,x1,y1) of that candle
+        self.prev_trade_sig = None          # will hold ((lbl3020, box3020), (lbl1510, box1510))
+        self.counter = 0 #can't sell before buying
+        self.buy_count = 0 
+        self.sell_count = 0
+        
         self.templates = {}
         for lbl in ("HH", "LL", "HL", "LH"):
             tmpl = cv2.imread(f"templates/{lbl}.png", cv2.IMREAD_GRAYSCALE)
@@ -39,7 +46,7 @@ class DetectionWorker(QThread):
         img: np.ndarray,
         merged_boxes: list,
         templates: dict[str, np.ndarray],
-        want_labels: tuple[str, str],        # e.g. ("HH", "LL")
+        want_labels: tuple[str, str],       
         debug_img: np.ndarray,
         w_crop: int = 130,
         h_crop: int = 100,
@@ -55,7 +62,7 @@ class DetectionWorker(QThread):
             x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
             patches, boxes = [], []
 
-            if idx == 0:                         # first candle → both above & below
+            if idx == 0:
                 y_above = max(0, y0 - h_crop)
                 y_below = min(img_h - h_crop, y1)
                 patches += [
@@ -67,12 +74,12 @@ class DetectionWorker(QThread):
                     (x_left, y_below, x_left + w_crop, y_below + h_crop),
                 ]
                 prev_y = y0
-            else:                                # later candles → only above **or** below
-                if y0 < prev_y:                  # visually higher
+            else:                                
+                if y0 < prev_y:
                     y_above = max(0, y0 - h_crop)
                     patches.append(('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]))
                     boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
-                else:                            # lower or equal
+                else:
                     y_below = min(img_h - h_crop, y1)
                     patches.append(('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]))
                     boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
@@ -86,7 +93,7 @@ class DetectionWorker(QThread):
             # template matching
             for pos, patch in patches:
                 patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-                for lbl in want_labels:          # e.g. HH/LL  or  HL/LH
+                for lbl in want_labels:          
                     tmpl = templates[lbl]
                     max_val = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED).max()
                     if max_val >= threshold:
@@ -107,37 +114,103 @@ class DetectionWorker(QThread):
         templates,
         threshold=0.8, w_crop=130, h_crop=100
     ):
-        os.makedirs("dummy", exist_ok=True)
-        debug_3020, debug_1510 = left_img.copy(), right_img.copy()
+        def scan_rightmost_candle(img, boxes, want_labels, debug_img, label_side):
+            if len(boxes) < 2:
+                print(f"{label_side}: Not enough candles detected.")
+                return None, None
 
-        found_3020 = self._scan_side(
-            left_img, merged_left, templates, ("HH", "LL"),
-            debug_3020, w_crop, h_crop, threshold
+            prev_box, curr_box = sorted(boxes, key=lambda b: b[0])[-2:]
+            prev_y = prev_box[1]
+            x0, y0, x1, y1 = curr_box
+            xc = (x0 + x1) // 2
+            x_left = max(0, min(img.shape[1] - w_crop, xc - w_crop // 2))
+
+            if y0 < prev_y:
+                y_top = max(0, y0 - h_crop)
+                patch = img[y_top:y_top + h_crop, x_left:x_left + w_crop]
+                cv2.rectangle(debug_img, (x_left, y_top), (x_left + w_crop, y_top + h_crop), (0, 255, 0), 2)
+            else:
+                y_bot = min(img.shape[0] - h_crop, y1)
+                patch = img[y_bot:y_bot + h_crop, x_left:x_left + w_crop]
+                cv2.rectangle(debug_img, (x_left, y_bot), (x_left + w_crop, y_bot + h_crop), (0, 0, 255), 2)
+
+            patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+            for lbl in want_labels:
+                tmpl = templates[lbl]
+                res = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res)
+                if max_val >= threshold:
+                    print(f"{label_side}: matched {lbl} with confidence {max_val:.2f}")
+                    return lbl, tuple(curr_box)
+
+            print(f"{label_side}: no match found")
+            return None, tuple(curr_box)
+
+        # Analyze 3020 side 
+        debug_left = left_img.copy()
+        lbl_3020, box_id_3020 = scan_rightmost_candle(
+            left_img, merged_left, ("HH", "LL"), debug_left, "3020"
         )
-        if not found_3020:
-            print("No HH or LL in 3020; skipping 1510 analysis.")
-            cv2.imwrite("dummy/debug_3020.png", debug_3020)
+
+        # save debug image 
+        os.makedirs("dummy", exist_ok=True)
+        cv2.imwrite("dummy/debug_3020.png", debug_left)
+
+        #  Early exits 
+        if (lbl_3020, box_id_3020) == (self.prev_hhll_label, self.prev_hhll_box_id):
+            print("3020: Skipping duplicate HH/LL signal.")
             return None
 
-        found_1510 = self._scan_side(
-            right_img, merged_right, templates, ("HL", "LH"),
-            debug_1510, w_crop, h_crop, threshold
-        )
+        if not lbl_3020:
+            print("3020: No valid HH/LL signal.")
+            return None
 
-        cv2.imwrite("dummy/debug_3020.png", debug_3020)
-        cv2.imwrite("dummy/debug_1510.png", debug_1510)
+        #  Analyze 1510 side 
+        debug_right = right_img.copy()
+        lbl_1510, box_id_1510 = scan_rightmost_candle(
+            right_img, merged_right, ("HL", "LH"), debug_right, "1510")
 
-        # ─ trade decision ─
-        if   found_3020 == "HH" and found_1510 == "HL": return "BUY"
-        elif found_3020 == "LL" and found_1510 == "LH": return "SELL"
+        # Always save right-side debug
+        cv2.imwrite("dummy/debug_1510.png", debug_right)
+
+        # Make trade decision 
+        if lbl_3020 == "HH" and lbl_1510 == "HL":
+            print(">> BUY signal detected.")
+            self.prev_trade_sig = ((lbl_3020, box_id_3020), (lbl_1510, box_id_1510))
+            self.prev_hhll_label = lbl_3020
+            self.prev_hhll_box_id = box_id_3020
+            self.buy_count +=1
+            self.counter += 1
+            #pyautogui.doubleClick("buyButton")
+            #take screenshot of buy button on local machine
+            return "BUY"
+
+        elif lbl_3020 == "LL" and lbl_1510 == "LH":
+            if self.counter > 0:
+                current_sig = ((lbl_3020, box_id_3020), (lbl_1510, box_id_1510))
+                if current_sig != self.prev_trade_sig:
+                    print(">> SELL signal detected.")
+                    self.prev_trade_sig = current_sig
+                    self.prev_hhll_label = lbl_3020
+                    self.prev_hhll_box_id = box_id_3020
+                    self.sell_count += 1
+                    self.counter -= 1
+                    #pyautogui.doubleClick("sellButton")
+                    #take screenshot of sell button on local machine
+                    return "SELL"
+                else:
+                    print("SELL skipped — duplicate signal")
+                    return None
+            else:
+                print("SELL failed, you have 0 buys")
+
         else:
-            print(f"No trade: 3020={found_3020}, 1510={found_1510}")
+            print(f"No trade: 3020={lbl_3020}, 1510={lbl_1510}")
             return None
 
     def analyze_candles_dynamic(self, img, coords, w_crop=130, h_crop=100):
         img_h, img_w = img.shape[:2]
         patches_per_candle = []  # to store cropped patches and positions for debug
-
         coords_sorted = sorted(coords, key=lambda b: b[0])  # sort by x0 (left edge)
 
         prev_y = None
@@ -183,7 +256,6 @@ class DetectionWorker(QThread):
 
         return patches_per_candle
 
-    
     def preprocess_for_ocr(patch):
         # Convert to grayscale
         gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
@@ -291,7 +363,12 @@ class DetectionWorker(QThread):
 
             if decision:
                 print(f"Trade decision: {decision}")
-
+                print(f"Number of buys: {self.buy_count}")
+                print(f"Number of sells: {self.sell_count}")
+            else:
+                print(f"Number of buys: {self.buy_count}")
+                print(f"Number of sells: {self.sell_count}")
+                
             # Draw bounding boxes on images for visualization
             left_img = self.draw_coords_only(left_img, merged_left)
             right_img = self.draw_coords_only(right_img, merged_right)
@@ -302,10 +379,8 @@ class DetectionWorker(QThread):
 
             self.frame_count += 1
             print(f"\nFrame {self.frame_count} processed in {time.time() - start_time:.2f} sec.")
-
+            
         self.finished.emit()
-
-
 
     def process_results(self, results):
         boxes = []
@@ -320,6 +395,7 @@ class DetectionWorker(QThread):
         #print("Detected boxes:", boxes)
         return boxes, scores
     
+    '''Uncomment lines to observe coords at each detected candle'''
     def draw_coords_only(self, img, boxes):
         img = img.astype(np.uint8).copy()
         for box in boxes:
@@ -404,7 +480,10 @@ class MarketWorker:
         self.height = 410
 
         self.total_frames = 20 * 60 * 1  # 20 minutes at 1 fps
-
+        
+        '''
+        Uncomment lines below to observe candle detection
+        '''
         # self.left_replica = ReplicaScreen(
         #     0,
         #     400,
@@ -422,6 +501,9 @@ class MarketWorker:
         #     title="1510",
         #     trim_right=0
         # )
+        
+        # self.detection_thread.update_left.connect(self.left_replica.update_image_with_boxes)
+        # self.detection_thread.update_right.connect(self.right_replica.update_image_with_boxes)
 
         self.detection_thread = DetectionWorker(
             model=self.model,
@@ -432,15 +514,12 @@ class MarketWorker:
             total_frames=self.total_frames
         )
 
-        # self.detection_thread.update_left.connect(self.left_replica.update_image_with_boxes)
-        # self.detection_thread.update_right.connect(self.right_replica.update_image_with_boxes)
         self.detection_thread.finished.connect(self.on_finished)
         self.detection_thread.start()
 
     def on_finished(self):
         print("Detection finished.")
         self.app.quit()
-
 
 if __name__ == "__main__":
     mw = MarketWorker()
