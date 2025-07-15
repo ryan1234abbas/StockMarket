@@ -34,153 +34,105 @@ class DetectionWorker(QThread):
                 raise FileNotFoundError(f"Template {lbl}.png missing in templates/")
             self.templates[lbl] = tmpl
 
-    def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right, templates, threshold=0.8, w_crop=130, h_crop=100):
-        save_folder = "dummy"
-        os.makedirs(save_folder, exist_ok=True)
-
-        debug_3020 = left_img.copy()
-        debug_1510 = right_img.copy()
-
-        img_h, img_w = left_img.shape[:2]
-
-        # Sort left candles left-to-right by x0
-        left_sorted = sorted(merged_left, key=lambda b: b[0])
-
-        # For left_img candles: decide above/below for cropping based on relative y positions
+    def _scan_side(
+        self,
+        img: np.ndarray,
+        merged_boxes: list,
+        templates: dict[str, np.ndarray],
+        want_labels: tuple[str, str],        # e.g. ("HH", "LL")
+        debug_img: np.ndarray,
+        w_crop: int = 130,
+        h_crop: int = 100,
+        threshold: float = 0.8,
+    ):
+        img_h, img_w = img.shape[:2]
         prev_y = None
-        found_3020 = None
-        for idx, (x0, y0, x1, y1) in enumerate(left_sorted):
+        found_lbl = None
+
+        for idx, (x0, y0, x1, y1) in enumerate(sorted(merged_boxes, key=lambda b: b[0])):
+            # decide crop rectangle
             xc = (x0 + x1) // 2
             x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
+            patches, boxes = [], []
 
-            patches = []
-            boxes = []
-
-            if idx == 0:
-                # First candle: crop both above and below
+            if idx == 0:                         # first candle → both above & below
                 y_above = max(0, y0 - h_crop)
                 y_below = min(img_h - h_crop, y1)
-                patches.append(('above', left_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()))
-                patches.append(('below', left_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()))
-                boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
-                boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
+                patches += [
+                    ('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]),
+                    ('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]),
+                ]
+                boxes  += [
+                    (x_left, y_above, x_left + w_crop, y_above + h_crop),
+                    (x_left, y_below, x_left + w_crop, y_below + h_crop),
+                ]
                 prev_y = y0
-            else:
-                if y0 < prev_y:
-                    # Higher candle than previous → box above only
+            else:                                # later candles → only above **or** below
+                if y0 < prev_y:                  # visually higher
                     y_above = max(0, y0 - h_crop)
-                    patches.append(('above', left_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()))
+                    patches.append(('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]))
                     boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
-                else:
-                    # Lower or equal candle → box below only
+                else:                            # lower or equal
                     y_below = min(img_h - h_crop, y1)
-                    patches.append(('below', left_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()))
+                    patches.append(('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]))
                     boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
                 prev_y = y0
 
-            # Draw debug boxes for left_img
+            # draw green (above) / red (below) rectangles for debug
             for (x1_, y1_, x2_, y2_) in boxes:
                 color = (0, 255, 0) if y1_ < y2_ and 'above' in [p[0] for p in patches] else (0, 0, 255)
-                cv2.rectangle(debug_3020, (x1_, y1_), (x2_, y2_), color, 2)
+                cv2.rectangle(debug_img, (x1_, y1_), (x2_, y2_), color, 2)
 
-            # Template matching for left_img candle patches (only HH, LL)
+            # template matching
             for pos, patch in patches:
                 patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-                for lbl in ("HH", "LL"):
-                    tmpl = templates.get(lbl)
-                    if tmpl is None:
-                        continue
-                    res = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
-                    max_val = res.max()
+                for lbl in want_labels:          # e.g. HH/LL  or  HL/LH
+                    tmpl = templates[lbl]
+                    max_val = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED).max()
                     if max_val >= threshold:
-                        print(f"3020 candle {idx + 1} matched {lbl} ({pos}) with confidence {max_val:.2f}")
-                        found_3020 = lbl
+                        print(f"Matched {lbl} on candle {idx+1} ({pos}) conf={max_val:.2f}")
+                        found_lbl = lbl
                         break
-                if found_3020:
+                if found_lbl:
                     break
-            if found_3020:
+            if found_lbl:
                 break
-            else:
-                print(f"3020 candle {idx + 1} no HH or LL match found")
 
+        return found_lbl
+
+    def analyze_candles_tm(
+        self,
+        left_img, merged_left,
+        right_img, merged_right,
+        templates,
+        threshold=0.8, w_crop=130, h_crop=100
+    ):
+        os.makedirs("dummy", exist_ok=True)
+        debug_3020, debug_1510 = left_img.copy(), right_img.copy()
+
+        found_3020 = self._scan_side(
+            left_img, merged_left, templates, ("HH", "LL"),
+            debug_3020, w_crop, h_crop, threshold
+        )
         if not found_3020:
-            print("No HH or LL found in 3020 candles; skipping 1510 analysis.")
-            cv2.imwrite(os.path.join(save_folder, "debug_3020.png"), debug_3020)
-            cv2.imwrite(os.path.join(save_folder, "debug_1510.png"), debug_1510)
+            print("No HH or LL in 3020; skipping 1510 analysis.")
+            cv2.imwrite("dummy/debug_3020.png", debug_3020)
             return None
 
-        # Repeat similar logic for right_img candles (HL, LH), relative y position decides above or below box
-        img_h2, img_w2 = right_img.shape[:2]
-        right_sorted = sorted(merged_right, key=lambda b: b[0])
-        prev_y2 = None
-        found_1510 = None
+        found_1510 = self._scan_side(
+            right_img, merged_right, templates, ("HL", "LH"),
+            debug_1510, w_crop, h_crop, threshold
+        )
 
-        for idx, (x0, y0, x1, y1) in enumerate(right_sorted):
-            xc = (x0 + x1) // 2
-            x_left = max(0, min(img_w2 - w_crop, xc - w_crop // 2))
+        cv2.imwrite("dummy/debug_3020.png", debug_3020)
+        cv2.imwrite("dummy/debug_1510.png", debug_1510)
 
-            patches = []
-            boxes = []
-
-            if idx == 0:
-                y_above = max(0, y0 - h_crop)
-                y_below = min(img_h2 - h_crop, y1)
-                patches.append(('above', right_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()))
-                patches.append(('below', right_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()))
-                boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
-                boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
-                prev_y2 = y0
-            else:
-                if y0 < prev_y2:
-                    y_above = max(0, y0 - h_crop)
-                    patches.append(('above', right_img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()))
-                    boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
-                else:
-                    y_below = min(img_h2 - h_crop, y1)
-                    patches.append(('below', right_img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()))
-                    boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
-                prev_y2 = y0
-
-            # Draw debug boxes for right_img
-            for (x1_, y1_, x2_, y2_) in boxes:
-                color = (0, 255, 0) if y1_ < y2_ and 'above' in [p[0] for p in patches] else (0, 0, 255)
-                cv2.rectangle(debug_1510, (x1_, y1_), (x2_, y2_), color, 2)
-
-            # Template matching for right_img candle patches (only HL, LH)
-            for pos, patch in patches:
-                patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-                for lbl in ("HL", "LH"):
-                    tmpl = templates.get(lbl)
-                    if tmpl is None:
-                        continue
-                    res = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
-                    max_val = res.max()
-                    if max_val >= threshold:
-                        print(f"1510 candle {idx + 1} matched {lbl} ({pos}) with confidence {max_val:.2f}")
-                        found_1510 = lbl
-                        break
-                if found_1510:
-                    break
-            if found_1510:
-                break
-            else:
-                print(f"1510 candle {idx + 1} no HL or LH match found")
-
-        cv2.imwrite(os.path.join(save_folder, "debug_3020.png"), debug_3020)
-        cv2.imwrite(os.path.join(save_folder, "debug_1510.png"), debug_1510)
-
-        # Buy/sell logic
-        if found_3020 == "HH" and found_1510 == "HL":
-            print("Decision: BUY")
-            return "BUY"
-        elif found_3020 == "LL" and found_1510 == "LH":
-            print("Decision: SELL")
-            return "SELL"
+        # ─ trade decision ─
+        if   found_3020 == "HH" and found_1510 == "HL": return "BUY"
+        elif found_3020 == "LL" and found_1510 == "LH": return "SELL"
         else:
-            print(f"No trade decision based on found labels: 3020={found_3020}, 1510={found_1510}")
+            print(f"No trade: 3020={found_3020}, 1510={found_1510}")
             return None
-
-
 
     def analyze_candles_dynamic(self, img, coords, w_crop=130, h_crop=100):
         img_h, img_w = img.shape[:2]
@@ -237,7 +189,6 @@ class DetectionWorker(QThread):
         gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
         # Apply thresholding to enhance text visibility
         _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        # Optionally dilate or erode here if needed
         return thresh
     
     def classify_patch(self, patch_bgr):
@@ -249,7 +200,6 @@ class DetectionWorker(QThread):
             if max_val > best_val:
                 best_lbl, best_val = lbl, max_val
         return best_lbl if best_val >= self.thresh else None, best_val
-
     
     def crop(self,
             img: np.ndarray,
@@ -443,8 +393,6 @@ class DetectionWorker(QThread):
             used.add(i)
 
         return merged
-
-
 class MarketWorker:
     def __init__(self):
         self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
@@ -497,4 +445,3 @@ class MarketWorker:
 if __name__ == "__main__":
     mw = MarketWorker()
     sys.exit(mw.app.exec_())
-    
