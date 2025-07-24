@@ -45,6 +45,9 @@ class DetectionWorker(QThread):
         self.prev_lbl_3020 = None
         self.prev_lbl_1510 = None
         self.first_trade_done = False
+        #balance speed with accuracy
+        self.last_trade_time = 0
+        self.trade_cooldown = 6.5  
 
         #for debugging on gui screens
         # self.update_left.emit(debug_left, [])
@@ -208,6 +211,11 @@ class DetectionWorker(QThread):
                 return labels[-1]
             else:
                 return label_str
+        
+        now = time.time()
+        if now - self.last_trade_time < self.trade_cooldown:
+            print("Cooldown active, skipping trade.")
+            return None
 
         # --- Detection ---
         (_, _), (lbl_3020, box_3020), debug_3020 = self.scan_rightmost_candle(
@@ -252,30 +260,30 @@ class DetectionWorker(QThread):
         curr_box_dims = (box_3020[0], box_3020[1], box_3020[2], box_3020[3])
         if not hasattr(self, 'prev_box_dims') or self.prev_box_dims is None:
             self.prev_box_dims = curr_box_dims
-            self.prev_hhll_label = None
-            self.prev_hllh_label = None
+            self.prev_lbl_3020 = None
+            self.prev_lbl_1510 = None
+            self.prev_trade_signal = None
         else:
             if curr_width_3020 < (self.prev_box_dims[2] - self.prev_box_dims[0]):
                 print("New candle box detected, resetting last labels.")
-                self.prev_hhll_label = None
-                self.prev_hllh_label = None
+                self.prev_lbl_3020 = None
+                self.prev_lbl_1510 = None
                 self.prev_trade_signal = None
             self.prev_box_dims = curr_box_dims
 
         # --- Trading logic ---
-        # Compose current trade signal tuple
         current_trade_signal = (lbl_3020, lbl_1510)
 
         # BUY logic: HH + HL
         if lbl_3020 == "HH" and lbl_1510 == "HL":
-            # If this trade signal is new OR a new candle box
-            if (self.prev_trade_signal != current_trade_signal) or new_3020_candle or new_1510_candle:
+            if (lbl_3020 != self.prev_lbl_3020) or (lbl_1510 != self.prev_lbl_1510) or new_3020_candle or new_1510_candle:
+                self.last_trade_time = now
                 print(">> BUY signal detected (HH on 3020, HL on 1510)")
                 self.buy_count += 1
                 self.counter += 1
+                self.prev_lbl_3020 = lbl_3020
+                self.prev_lbl_1510 = lbl_1510
                 self.prev_trade_signal = current_trade_signal
-                self.prev_hhll_label = lbl_3020
-                self.prev_hllh_label = lbl_1510
                 return "BUY"
             else:
                 print("Buy signal repeated for same candle, ignoring.")
@@ -283,14 +291,15 @@ class DetectionWorker(QThread):
         # SELL logic: LL + LH
         elif lbl_3020 == "LL" and lbl_1510 == "LH":
             if self.counter > 0:
-                # Only sell if trade signal changed or new candle box
-                if (self.prev_trade_signal != current_trade_signal) or new_3020_candle or new_1510_candle:
+                # Sell if label changed or new candle
+                if (lbl_3020 != self.prev_lbl_3020) or (lbl_1510 != self.prev_lbl_1510) or new_3020_candle or new_1510_candle:
+                    self.last_trade_time = now
                     print(">> SELL signal detected (LL on 3020, LH on 1510)")
                     self.sell_count += 1
                     self.counter -= 1
+                    self.prev_lbl_3020 = lbl_3020
+                    self.prev_lbl_1510 = lbl_1510
                     self.prev_trade_signal = current_trade_signal
-                    self.prev_hhll_label = lbl_3020
-                    self.prev_hllh_label = lbl_1510
                     return "SELL"
                 else:
                     print("Sell signal repeated for same candle, ignoring.")
@@ -299,8 +308,6 @@ class DetectionWorker(QThread):
 
         print("No new candle detected or no valid trade signal.")
         return None
-
-    
 
     def preprocess_for_ocr(patch):
         # Convert to grayscale
