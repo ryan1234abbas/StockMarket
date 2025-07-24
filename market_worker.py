@@ -12,6 +12,9 @@ import re
 import os
 import pyautogui
 import glob
+from collections import deque
+from collections import OrderedDict
+
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
     update_right = pyqtSignal(np.ndarray, list)
@@ -29,11 +32,20 @@ class DetectionWorker(QThread):
         self.sct = mss.mss()
         self.running = True
         self.prev_hhll_label   = None   # last HH or LL actually traded
+        self.prev_hllh_label = None
         self.prev_hhll_box_id  = None   # (x0,y0,x1,y1) of that candle
-        self.prev_trade_sig = None          # will hold ((lbl3020, box3020), (lbl1510, box1510))
+        self.prev_hl_lh_label = None
+        self.prev_box_dims = None
+        self.prev_trade_signal = None
         self.counter = 0 #can't sell before buying
         self.buy_count = 0 
         self.sell_count = 0
+        self.last_trade_signature = None  #avoids duplicate buying/selling in from boxes
+        self.prev_label_sig = None
+        self.prev_lbl_3020 = None
+        self.prev_lbl_1510 = None
+        self.first_trade_done = False
+
         #for debugging on gui screens
         # self.update_left.emit(debug_left, [])
         # self.update_right.emit(debug_right, [])
@@ -118,344 +130,177 @@ class DetectionWorker(QThread):
                 break
 
         return found_lbl
-    
-    def scan_rightmost_candle(self, img, boxes, want_labels, debug_img, label_side, threshold=0.93, w_crop=130, h_crop=100):
+        
+    def scan_rightmost_candle(self, img, boxes, want_labels, debug_img, label_side, threshold=0.93):
         img_h, img_w = img.shape[:2]
 
-        if len(boxes) == 0:
+        if not boxes:
             print(f"{label_side}: No candles detected.")
             return (None, None), (None, None), debug_img
 
-        if len(boxes) == 1:
-            curr_box = boxes[0]
-            x0, y0, x1, y1 = curr_box
+        # Always choose the rightmost box (latest candle)
+        rightmost_box = max(boxes, key=lambda b: b[0])
+        x0, y0, x1, y1 = rightmost_box
 
-            # Use stored previous candle box for comparison if exists
-            if hasattr(self, 'prev_candle_box') and self.prev_candle_box is not None:
-                prev_y0 = self.prev_candle_box[1]
+        # Define a scan region near the right edge of the candle box to look for labels
+        scan_margin = 35
+        right_edge_buffer = 70
+        scan_x0 = max(0, x1 - scan_margin)
+        scan_x1 = img_w - right_edge_buffer
+
+        center_y = (y0 + y1) // 2
+        box_height = 5000  # large enough to cover vertical range
+        scan_y0 = max(0, center_y - box_height // 2)
+        scan_y1 = min(img_h, center_y + box_height // 2)
+
+        # Ensure minimum height for scan box
+        if scan_y1 - scan_y0 < 100:
+            scan_y0 = max(0, scan_y1 - 100)
+
+        # Draw scan rectangle on debug image
+        cv2.rectangle(debug_img, (scan_x0, scan_y0), (scan_x1, scan_y1), (255, 0, 0), 2)
+
+        # Extract patch to run template matching for labels
+        patch = img[scan_y0:scan_y1, scan_x0:scan_x1]
+        label_found = None
+        label_coords = None
+
+        if patch.size > 0:
+            gray_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+
+            for label in want_labels:
+                max_conf = 0
+                for tmpl in self.templates[label]:
+                    res = cv2.matchTemplate(gray_patch, tmpl, cv2.TM_CCOEFF_NORMED)
+                    _, curr_conf, _, _ = cv2.minMaxLoc(res)
+                    if curr_conf > max_conf:
+                        max_conf = curr_conf
+
+                if max_conf >= threshold:
+                    print(f"{label_side} (right box): matched {label} with confidence {max_conf:.2f}")
+                    label_found = label
+                    label_coords = (scan_x0, scan_y0, scan_x1, scan_y1)
+                    break  # stop after first confident match
+
+        # Save rightmost candle box for potential future use
+        self.prev_candle_box = rightmost_box
+
+        # Return: no main label here, only right box label and debug image
+        return (None, None), (label_found, label_coords), debug_img
+
+    def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right,
+                        templates, threshold=0.93, w_crop=130, h_crop=100):
+        def box_width(box):
+            return (box[2] - box[0]) if box else 0
+
+        def prioritize_rightmost_label(label_str, box, label_origin):
+            if not label_str or not isinstance(label_str, str):
+                print(f"[{label_origin}] No label string provided.")
+                return None
+
+            if not box or not isinstance(box, (tuple, list)) or len(box) != 4:
+                print(f"[{label_origin}] Invalid or missing box.")
+                return label_str
+
+            if '|' in label_str:
+                labels = label_str.split('|')
+                print(f"[{label_origin}] Multiple labels found: {labels}, picking rightmost: {labels[-1]}")
+                return labels[-1]
             else:
-                prev_y0 = y0  # if no previous, default to current
+                return label_str
 
-            # Decide crop box above or below based on y0 comparison
-            if y0 < prev_y0:
-                y_top = max(0, y0 - h_crop)
-                main_patch = img[y_top:y_top + h_crop, max(0, (x0 + x1)//2 - w_crop//2) : max(0, (x0 + x1)//2 - w_crop//2) + w_crop]
-                cv2.rectangle(debug_img,
-                            (max(0, (x0 + x1)//2 - w_crop//2), y_top),
-                            (max(0, (x0 + x1)//2 - w_crop//2) + w_crop, y_top + h_crop),
-                            (0, 255, 0), 2)
-            else:
-                y_bot = min(img_h - h_crop, y1)
-                main_patch = img[y_bot:y_bot + h_crop, max(0, (x0 + x1)//2 - w_crop//2) : max(0, (x0 + x1)//2 - w_crop//2) + w_crop]
-                cv2.rectangle(debug_img,
-                            (max(0, (x0 + x1)//2 - w_crop//2), y_bot),
-                            (max(0, (x0 + x1)//2 - w_crop//2) + w_crop, y_bot + h_crop),
-                            (0, 0, 255), 2)
+        # --- Detection ---
+        (_, _), (lbl_3020, box_3020), debug_3020 = self.scan_rightmost_candle(
+            left_img, merged_left, ("HH", "LL"), left_img.copy(), "3020", threshold)
+        (_, _), (lbl_1510, box_1510), debug_1510 = self.scan_rightmost_candle(
+            right_img, merged_right, ("HL", "LH"), right_img.copy(), "1510", threshold)
 
-            main_patch_gray = cv2.cvtColor(main_patch, cv2.COLOR_BGR2GRAY)
+        # --- Prioritize rightmost label if multiple ---
+        lbl_3020 = prioritize_rightmost_label(lbl_3020, box_3020, "3020")
+        lbl_1510 = prioritize_rightmost_label(lbl_1510, box_1510, "1510")
 
-            label_main = None
-            for lbl in want_labels:
-                max_val_for_label = 0
-                for tmpl in self.templates[lbl]:
-                    res = cv2.matchTemplate(main_patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
-                    _, max_val, _, _ = cv2.minMaxLoc(res)
-                    if max_val > max_val_for_label:
-                        max_val_for_label = max_val
+        # --- Width tracking ---
+        curr_width_3020 = box_width(box_3020)
+        curr_width_1510 = box_width(box_1510)
 
-                if max_val_for_label >= threshold:
-                    print(f"{label_side} (main box single candle): matched {lbl} with confidence {max_val_for_label:.2f}")
-                    label_main = lbl
-                    break
+        prev_width_3020 = getattr(self, 'prev_width_3020', None)
+        prev_width_1510 = getattr(self, 'prev_width_1510', None)
 
-            # Draw right side box unconditionally
-            fixed_right_edge = img_w - 70
-            right_box_x_left = x1
-            right_box_x_right = fixed_right_edge
+        # Consider first detection as new candle or if box shrinks (new candle assigned)
+        new_3020_candle = (prev_width_3020 is None) or (curr_width_3020 < prev_width_3020)
+        new_1510_candle = (prev_width_1510 is None) or (curr_width_1510 < prev_width_1510)
 
-            height = 2000
-            candle_mid_y = (y0 + y1) // 2
-            right_box_y_top = max(0, candle_mid_y - height // 2)
-            right_box_y_bottom = min(img_h, candle_mid_y + height // 2)
-
-            if right_box_y_bottom - right_box_y_top < 100:
-                right_box_y_top = max(0, right_box_y_bottom - 100)
-
-            cv2.rectangle(debug_img,
-                        (right_box_x_left, right_box_y_top),
-                        (right_box_x_right, right_box_y_bottom),
-                        (255, 0, 0), 2)
-
-            right_patch = img[right_box_y_top:right_box_y_bottom, right_box_x_left:right_box_x_right]
-            label_right = None
-            right_box_coords = None
-
-            if right_patch is not None and right_patch.size > 0:
-                right_patch_gray = cv2.cvtColor(right_patch, cv2.COLOR_BGR2GRAY)
-                for lbl in want_labels:
-                    max_val_for_label = 0
-                    for tmpl in self.templates[lbl]:
-                        res = cv2.matchTemplate(right_patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
-                        _, max_val, _, _ = cv2.minMaxLoc(res)
-                        if max_val > max_val_for_label:
-                            max_val_for_label = max_val
-
-                    if max_val_for_label >= threshold:
-                        print(f"{label_side} (right box single candle): matched {lbl} with confidence {max_val_for_label:.2f}")
-                        label_right = lbl
-                        right_box_coords = (right_box_x_left, right_box_y_top, right_box_x_right, right_box_y_bottom)
-                        break
-
-            # Update previous candle box for next call
-            self.prev_candle_box = curr_box
-
-            return (label_main, tuple(curr_box)), (label_right, right_box_coords), debug_img
-
-        # --- If more than 1 box ---
-        prev_box, curr_box = sorted(boxes, key=lambda b: b[0])[-2:]
-        x0, y0, x1, y1 = curr_box
-        prev_y = prev_box[1]
-
-        if y0 < prev_y:
-            y_top = max(0, y0 - h_crop)
-            main_patch = img[y_top:y_top + h_crop, max(0, (x0 + x1)//2 - w_crop//2) : max(0, (x0 + x1)//2 - w_crop//2) + w_crop]
-            cv2.rectangle(debug_img,
-                        (max(0, (x0 + x1)//2 - w_crop//2), y_top),
-                        (max(0, (x0 + x1)//2 - w_crop//2) + w_crop, y_top + h_crop),
-                        (0, 255, 0), 2)
-        else:
-            y_bot = min(img_h - h_crop, y1)
-            main_patch = img[y_bot:y_bot + h_crop, max(0, (x0 + x1)//2 - w_crop//2) : max(0, (x0 + x1)//2 - w_crop//2) + w_crop]
-            cv2.rectangle(debug_img,
-                        (max(0, (x0 + x1)//2 - w_crop//2), y_bot),
-                        (max(0, (x0 + x1)//2 - w_crop//2) + w_crop, y_bot + h_crop),
-                        (0, 0, 255), 2)
-
-        main_patch_gray = cv2.cvtColor(main_patch, cv2.COLOR_BGR2GRAY)
-
-        label_main = None
-        for lbl in want_labels:
-            max_val_for_label = 0
-            for tmpl in self.templates[lbl]:
-                res = cv2.matchTemplate(main_patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, _ = cv2.minMaxLoc(res)
-                if max_val > max_val_for_label:
-                    max_val_for_label = max_val
-
-            if max_val_for_label >= threshold:
-                print(f"{label_side} (main box): matched {lbl} with confidence {max_val_for_label:.2f}")
-                label_main = lbl
-                break
-
-        fixed_right_edge = img_w - 70
-        right_box_x_left = x1
-        right_box_x_right = fixed_right_edge
-
-        height = 1500
-        candle_mid_y = (y0 + y1) // 2
-        right_box_y_top = max(0, candle_mid_y - height // 2)
-        right_box_y_bottom = min(img_h, candle_mid_y + height // 2)
-
-        if right_box_y_bottom - right_box_y_top < 100:
-            right_box_y_top = max(0, right_box_y_bottom - 100)
-
-        cv2.rectangle(debug_img,
-                    (right_box_x_left, right_box_y_top),
-                    (right_box_x_right, right_box_y_bottom),
-                    (255, 0, 0), 2)
-
-        right_patch = img[right_box_y_top:right_box_y_bottom, right_box_x_left:right_box_x_right]
-        label_right = None
-        right_box_coords = None
-
-        if right_patch is not None and right_patch.size > 0:
-            right_patch_gray = cv2.cvtColor(right_patch, cv2.COLOR_BGR2GRAY)
-            for lbl in want_labels:
-                max_val_for_label = 0
-                for tmpl in self.templates[lbl]:
-                    res = cv2.matchTemplate(right_patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
-                    _, max_val, _, _ = cv2.minMaxLoc(res)
-                    if max_val > max_val_for_label:
-                        max_val_for_label = max_val
-
-                if max_val_for_label >= threshold:
-                    print(f"{label_side} (right box): matched {lbl} with confidence {max_val_for_label:.2f}")
-                    label_right = lbl
-                    right_box_coords = (right_box_x_left, right_box_y_top, right_box_x_right, right_box_y_bottom)
-                    break
-
-        self.prev_candle_box = curr_box
-
-        return (label_main, tuple(curr_box)), (label_right, right_box_coords), debug_img
-
-
-    def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right, templates, threshold=0.93, w_crop=130, h_crop=100):
-        
+        # --- Save debug images ---
         trim_amount = 100
+        debug_3020 = debug_3020[trim_amount:, :] if debug_3020 is not None else None
+        debug_1510 = debug_1510[trim_amount:, :] if debug_1510 is not None else None
+        os.makedirs("dummy", exist_ok=True)
+        if debug_3020 is not None:
+            cv2.imwrite("dummy/debug_3020.png", debug_3020)
+        if debug_1510 is not None:
+            cv2.imwrite("dummy/debug_1510.png", debug_1510)
 
-        # Get all labels and boxes from scan_rightmost_candle for left and right sides
-        (lbl_3020_main, box_3020_main), (lbl_3020_right, box_3020_right), debug_left = self.scan_rightmost_candle(
-            left_img, merged_left, ("HH", "LL"), left_img.copy(), "3020", threshold, w_crop, h_crop
-        )
-        
-        # Only continue to analyze 1510 if HH or LL is found on 3020 side
-        if lbl_3020_main or lbl_3020_right:
-            (lbl_1510_main, box_1510_main), (lbl_1510_right, box_1510_right), debug_right = self.scan_rightmost_candle(
-                right_img, merged_right, ("HL", "LH"), right_img.copy(), "1510", threshold, w_crop, h_crop
-            )
+        # --- Update widths ---
+        self.prev_width_3020 = curr_width_3020
+        self.prev_width_1510 = curr_width_1510
 
-        else:
-            print("No HH or LL found on 3020. Skipping 1510 detection.")
-            debug_left = debug_left[trim_amount:, :]
-            cv2.imwrite("dummy/debug_3020.png", debug_left)
+        # --- Proceed only if both boxes exist ---
+        if not box_3020 or not box_1510:
             return None
 
-        # Trim top 50 pixels before saving debug images
-        debug_left = debug_left[trim_amount:, :]
-        debug_right = debug_right[trim_amount:, :]
+        # --- Reset stored labels if new candle box detected ---
+        curr_box_dims = (box_3020[0], box_3020[1], box_3020[2], box_3020[3])
+        if not hasattr(self, 'prev_box_dims') or self.prev_box_dims is None:
+            self.prev_box_dims = curr_box_dims
+            self.prev_hhll_label = None
+            self.prev_hllh_label = None
+        else:
+            if curr_width_3020 < (self.prev_box_dims[2] - self.prev_box_dims[0]):
+                print("New candle box detected, resetting last labels.")
+                self.prev_hhll_label = None
+                self.prev_hllh_label = None
+                self.prev_trade_signal = None
+            self.prev_box_dims = curr_box_dims
 
-        # create debug files
-        os.makedirs("dummy", exist_ok=True)
-        cv2.imwrite("dummy/debug_3020.png", debug_left)
-        cv2.imwrite("dummy/debug_1510.png", debug_right)
+        # --- Trading logic ---
+        # Compose current trade signal tuple
+        current_trade_signal = (lbl_3020, lbl_1510)
 
-        #Priority check on right side boxes 
-        if lbl_3020_right is not None and lbl_1510_right is not None:
-            if (lbl_3020_right, lbl_1510_right) == ("HH", "HL"):
-                current_sig = ((lbl_3020_right, box_3020_right), (lbl_1510_right, box_1510_right))
-                if current_sig != self.prev_trade_sig:
-                    print(f">> BUY signal detected (right side boxes prioritized).")
-                    self.prev_trade_sig = current_sig
-                    self.prev_hhll_label = lbl_3020_right
-                    self.prev_hhll_box_id = box_3020_right
-                    self.buy_count += 1
-                    self.counter += 1
-                    return "BUY"
-                else:
-                    print("BUY skipped — duplicate signal (right side boxes)")
-                    return None
+        # BUY logic: HH + HL
+        if lbl_3020 == "HH" and lbl_1510 == "HL":
+            # If this trade signal is new OR a new candle box
+            if (self.prev_trade_signal != current_trade_signal) or new_3020_candle or new_1510_candle:
+                print(">> BUY signal detected (HH on 3020, HL on 1510)")
+                self.buy_count += 1
+                self.counter += 1
+                self.prev_trade_signal = current_trade_signal
+                self.prev_hhll_label = lbl_3020
+                self.prev_hllh_label = lbl_1510
+                return "BUY"
+            else:
+                print("Buy signal repeated for same candle, ignoring.")
 
-            elif (lbl_3020_right, lbl_1510_right) == ("LL", "LH"):
-                if self.counter > 0:
-                    current_sig = ((lbl_3020_right, box_3020_right), (lbl_1510_right, box_1510_right))
-                    if current_sig != self.prev_trade_sig:
-                        print(f">> SELL signal detected (right side boxes prioritized).")
-                        self.prev_trade_sig = current_sig
-                        self.prev_hhll_label = lbl_3020_right
-                        self.prev_hhll_box_id = box_3020_right
-                        self.sell_count += 1
-                        self.counter -= 1
-                        return "SELL"
-                    else:
-                        print("SELL skipped — duplicate signal (right side boxes)")
-                        return None
-                else:
-                    print("SELL failed, you have 0 buys (right side boxes)")
-                    return None
-
-        # If no right side priority buy/sell signal detected, fallback to existing combos logic:
-        combos = [
-            (lbl_3020_main, box_3020_main, lbl_1510_main, box_1510_main),
-            (lbl_3020_main, box_3020_main, lbl_1510_right, box_1510_right),
-            (lbl_3020_right, box_3020_right, lbl_1510_main, box_1510_main),
-            (lbl_3020_right, box_3020_right, lbl_1510_right, box_1510_right),
-        ]
-
-        for lbl_3020, box_3020, lbl_1510, box_1510 in combos:
-            # Skip if any label is None
-            if lbl_3020 is None or lbl_1510 is None:
-                continue
-
-            # Skip duplicates exactly like your old logic
-            if (lbl_3020, box_3020) == (self.prev_hhll_label, self.prev_hhll_box_id):
-                print(f"Skipping duplicate HH/LL signal: {lbl_3020}, {box_3020}")
-                continue
-
-            # BUY logic
-            if (lbl_3020, lbl_1510) == ("HH", "HL"):
-                current_sig = ((lbl_3020, box_3020), (lbl_1510, box_1510))
-                if current_sig != self.prev_trade_sig:
-                    print(f">> BUY signal detected (3020: {lbl_3020}, 1510: {lbl_1510})")
-                    self.prev_trade_sig = current_sig
+        # SELL logic: LL + LH
+        elif lbl_3020 == "LL" and lbl_1510 == "LH":
+            if self.counter > 0:
+                # Only sell if trade signal changed or new candle box
+                if (self.prev_trade_signal != current_trade_signal) or new_3020_candle or new_1510_candle:
+                    print(">> SELL signal detected (LL on 3020, LH on 1510)")
+                    self.sell_count += 1
+                    self.counter -= 1
+                    self.prev_trade_signal = current_trade_signal
                     self.prev_hhll_label = lbl_3020
-                    self.prev_hhll_box_id = box_3020
-                    self.buy_count += 1
-                    self.counter += 1
-                    return "BUY"
+                    self.prev_hllh_label = lbl_1510
+                    return "SELL"
                 else:
-                    print("BUY skipped — duplicate signal")
-                    return None
+                    print("Sell signal repeated for same candle, ignoring.")
+            else:
+                print("Cannot sell before buying!")
 
-            # SELL logic
-            elif (lbl_3020, lbl_1510) == ("LL", "LH"):
-                if self.counter > 0:
-                    current_sig = ((lbl_3020, box_3020), (lbl_1510, box_1510))
-                    if current_sig != self.prev_trade_sig:
-                        print(f">> SELL signal detected (3020: {lbl_3020}, 1510: {lbl_1510})")
-                        self.prev_trade_sig = current_sig
-                        self.prev_hhll_label = lbl_3020
-                        self.prev_hhll_box_id = box_3020
-                        self.sell_count += 1
-                        self.counter -= 1
-                        return "SELL"
-                    else:
-                        print("SELL skipped — duplicate signal")
-                        return None
-                else:
-                    print("SELL failed, you cannot sell before buying")
-                    print(f"Number of sells you can make: {self.buy_count - self.sell_count}")
-                    return None
-
-        print("No trade signals found in any combo.")
+        print("No new candle detected or no valid trade signal.")
         return None
 
-    def analyze_candles_dynamic(self, img, coords, w_crop=130, h_crop=100):
-        img_h, img_w = img.shape[:2]
-        patches_per_candle = []  # to store cropped patches and positions for debug
-        coords_sorted = sorted(coords, key=lambda b: b[0])  # sort by x0 (left edge)
-
-        prev_y = None
-        for idx, (x0, y0, x1, y1) in enumerate(coords_sorted):
-            xc = (x0 + x1) // 2
-            x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
-
-            if idx == 0:
-                # First candle gets both above and below
-                y_above = max(0, y0 - h_crop)
-                y_below = min(img_h - h_crop, y1)
-                patch_above = img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()
-                patch_below = img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()
-                patches_per_candle.append({
-                    'candle_idx': idx,
-                    'above': patch_above,
-                    'below': patch_below,
-                    'boxes': ((x_left, y_above, x_left + w_crop, y_above + h_crop),
-                            (x_left, y_below, x_left + w_crop, y_below + h_crop))
-                })
-                prev_y = y0
-            else:
-                # For subsequent candles, compare y0 (top y)
-                if y0 < prev_y:
-                    # current candle visually higher → crop above only
-                    y_above = max(0, y0 - h_crop)
-                    patch_above = img[y_above:y_above + h_crop, x_left:x_left + w_crop].copy()
-                    patches_per_candle.append({
-                        'candle_idx': idx,
-                        'above': patch_above,
-                        'boxes': ((x_left, y_above, x_left + w_crop, y_above + h_crop),)
-                    })
-                else:
-                    # current candle visually lower or equal → crop below only
-                    y_below = min(img_h - h_crop, y1)
-                    patch_below = img[y_below:y_below + h_crop, x_left:x_left + w_crop].copy()
-                    patches_per_candle.append({
-                        'candle_idx': idx,
-                        'below': patch_below,
-                        'boxes': ((x_left, y_below, x_left + w_crop, y_below + h_crop),)
-                    })
-                prev_y = y0
-
-        return patches_per_candle
+    
 
     def preprocess_for_ocr(patch):
         # Convert to grayscale
@@ -583,7 +428,7 @@ class DetectionWorker(QThread):
 
             self.frame_count += 1
             print(f"\nFrame {self.frame_count} processed in {time.time() - start_time:.2f} sec.")
-            time.sleep(2)
+            #time.sleep(2)
             
         self.finished.emit()
 
