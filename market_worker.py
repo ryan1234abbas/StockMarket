@@ -133,99 +133,91 @@ class DetectionWorker(QThread):
                 break
 
         return found_lbl
-        
+            
     def scan_rightmost_candle(self, img, boxes, want_labels, debug_img, label_side, threshold=0.93):
         img_h, img_w = img.shape[:2]
 
         if not boxes:
             print(f"{label_side}: No candles detected.")
-            return (None, None), (None, None), debug_img
+            return (None, None), ([], None), debug_img  # empty list instead of single label
 
-        # Always choose the rightmost box (latest candle)
         rightmost_box = max(boxes, key=lambda b: b[0])
         x0, y0, x1, y1 = rightmost_box
 
-        # Define a scan region near the right edge of the candle box to look for labels
         scan_margin = 35
         right_edge_buffer = 70
         scan_x0 = max(0, x1 - scan_margin)
         scan_x1 = img_w - right_edge_buffer
 
         center_y = (y0 + y1) // 2
-        box_height = 5000  # large enough to cover vertical range
+        box_height = 5000
         scan_y0 = max(0, center_y - box_height // 2)
         scan_y1 = min(img_h, center_y + box_height // 2)
-
-        # Ensure minimum height for scan box
         if scan_y1 - scan_y0 < 100:
             scan_y0 = max(0, scan_y1 - 100)
 
-        # Draw scan rectangle on debug image
         cv2.rectangle(debug_img, (scan_x0, scan_y0), (scan_x1, scan_y1), (255, 0, 0), 2)
 
-        # Extract patch to run template matching for labels
         patch = img[scan_y0:scan_y1, scan_x0:scan_x1]
-        label_found = None
-        label_coords = None
+        matches = []  # list to hold (label, box) tuples
 
         if patch.size > 0:
             gray_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
 
             for label in want_labels:
                 max_conf = 0
+                best_loc = None
                 for tmpl in self.templates[label]:
                     res = cv2.matchTemplate(gray_patch, tmpl, cv2.TM_CCOEFF_NORMED)
-                    _, curr_conf, _, _ = cv2.minMaxLoc(res)
+                    _, curr_conf, _, max_loc = cv2.minMaxLoc(res)
                     if curr_conf > max_conf:
                         max_conf = curr_conf
+                        best_loc = max_loc  # location of best match for this template
 
-                if max_conf >= threshold:
+                if max_conf >= threshold and best_loc is not None:
+                    # Calculate absolute box coordinates of detected label inside img
+                    tmpl_h, tmpl_w = self.templates[label][0].shape[:2]
+                    abs_x0 = scan_x0 + best_loc[0]
+                    abs_y0 = scan_y0 + best_loc[1]
+                    abs_x1 = abs_x0 + tmpl_w
+                    abs_y1 = abs_y0 + tmpl_h
+
+                    matches.append((label, (abs_x0, abs_y0, abs_x1, abs_y1)))
+
                     print(f"{label_side} (right box): matched {label} with confidence {max_conf:.2f}")
-                    label_found = label
-                    label_coords = (scan_x0, scan_y0, scan_x1, scan_y1)
-                    break  # stop after first confident match
 
-        # Save rightmost candle box for potential future use
         self.prev_candle_box = rightmost_box
 
-        # Return: no main label here, only right box label and debug image
-        return (None, None), (label_found, label_coords), debug_img
+        # Return list of all matched labels with their boxes, plus the rightmost candle box for reference
+        return (None, None), (matches, rightmost_box), debug_img
 
     def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right,
                         templates, threshold=0.93, w_crop=130, h_crop=100):
+
         def box_width(box):
             return (box[2] - box[0]) if box else 0
 
-        def prioritize_rightmost_label(label_str, box, label_origin):
-            if not label_str or not isinstance(label_str, str):
-                print(f"[{label_origin}] No label string provided.")
-                return None
+        def is_label_latest_by_coords(labels_with_boxes, desired_label):
+            """
+            labels_with_boxes: list of (label_str, box)
+            box = (x0, y0, x1, y1)
+            Returns True if the label with the largest x1 equals desired_label.
+            """
+            if not labels_with_boxes:
+                return False
+            rightmost_label, rightmost_box = max(labels_with_boxes, key=lambda lb: lb[1][2])
+            return rightmost_label == desired_label
 
-            if not box or not isinstance(box, (tuple, list)) or len(box) != 4:
-                print(f"[{label_origin}] Invalid or missing box.")
-                return label_str
-
-            if '|' in label_str:
-                labels = label_str.split('|')
-                print(f"[{label_origin}] Multiple labels found: {labels}, picking rightmost: {labels[-1]}")
-                return labels[-1]
-            else:
-                return label_str
-        
         now = time.time()
-        if now - self.last_trade_time < self.trade_cooldown:
+        if now - getattr(self, 'last_trade_time', 0) < getattr(self, 'trade_cooldown', 0):
             print("Cooldown active, skipping trade.")
             return None
 
-        # --- Detection ---
-        (_, _), (lbl_3020, box_3020), debug_3020 = self.scan_rightmost_candle(
+        # --- Detection: get all matched labels with boxes ---
+        (_, _), (labels_3020, box_3020), debug_3020 = self.scan_rightmost_candle(
             left_img, merged_left, ("HH", "LL"), left_img.copy(), "3020", threshold)
-        (_, _), (lbl_1510, box_1510), debug_1510 = self.scan_rightmost_candle(
+        (_, _), (labels_1510, box_1510), debug_1510 = self.scan_rightmost_candle(
             right_img, merged_right, ("HL", "LH"), right_img.copy(), "1510", threshold)
-
-        # --- Prioritize rightmost label if multiple ---
-        lbl_3020 = prioritize_rightmost_label(lbl_3020, box_3020, "3020")
-        lbl_1510 = prioritize_rightmost_label(lbl_1510, box_1510, "1510")
 
         # --- Width tracking ---
         curr_width_3020 = box_width(box_3020)
@@ -234,7 +226,6 @@ class DetectionWorker(QThread):
         prev_width_3020 = getattr(self, 'prev_width_3020', None)
         prev_width_1510 = getattr(self, 'prev_width_1510', None)
 
-        # Consider first detection as new candle or if box shrinks (new candle assigned)
         new_3020_candle = (prev_width_3020 is None) or (curr_width_3020 < prev_width_3020)
         new_1510_candle = (prev_width_1510 is None) or (curr_width_1510 < prev_width_1510)
 
@@ -271,40 +262,52 @@ class DetectionWorker(QThread):
                 self.prev_trade_signal = None
             self.prev_box_dims = curr_box_dims
 
-        # --- Trading logic ---
-        current_trade_signal = (lbl_3020, lbl_1510)
+        # --- Determine current rightmost labels ---
+        rightmost_lbl_3020 = None
+        rightmost_lbl_1510 = None
+        if labels_3020:
+            rightmost_lbl_3020 = max(labels_3020, key=lambda lb: lb[1][2])[0]
+        if labels_1510:
+            rightmost_lbl_1510 = max(labels_1510, key=lambda lb: lb[1][2])[0]
 
-        # BUY logic: HH + HL
-        if lbl_3020 == "HH" and lbl_1510 == "HL":
-            if (lbl_3020 != self.prev_lbl_3020) or (lbl_1510 != self.prev_lbl_1510) or new_3020_candle or new_1510_candle:
+        current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
+
+        # --- Trading logic ---
+
+        # BUY: rightmost HH in 3020 and HL in 1510, no more recent conflicting labels
+        if (is_label_latest_by_coords(labels_3020, "HH") and
+            is_label_latest_by_coords(labels_1510, "HL")):
+
+            if (current_signal != self.prev_trade_signal) or new_3020_candle or new_1510_candle:
                 self.last_trade_time = now
                 print(">> BUY signal detected (HH on 3020, HL on 1510)")
-                self.buy_count += 1
-                self.counter += 1
-                self.prev_lbl_3020 = lbl_3020
-                self.prev_lbl_1510 = lbl_1510
-                self.prev_trade_signal = current_trade_signal
+                self.buy_count = getattr(self, 'buy_count', 0) + 1
+                self.counter = getattr(self, 'counter', 0) + 1
+                self.prev_lbl_3020 = "HH"
+                self.prev_lbl_1510 = "HL"
+                self.prev_trade_signal = current_signal
                 return "BUY"
             else:
-                print("Buy signal repeated for same candle, ignoring.")
+                print("Duplicate BUY signal, ignoring.")
 
-        # SELL logic: LL + LH
-        elif lbl_3020 == "LL" and lbl_1510 == "LH":
-            if self.counter > 0:
-                # Sell if label changed or new candle
-                if (lbl_3020 != self.prev_lbl_3020) or (lbl_1510 != self.prev_lbl_1510) or new_3020_candle or new_1510_candle:
+        # SELL: rightmost LL in 3020 and LH in 1510, no more recent conflicting labels
+        elif (is_label_latest_by_coords(labels_3020, "LL") and
+            is_label_latest_by_coords(labels_1510, "LH")):
+
+            if getattr(self, 'counter', 0) > 0:
+                if (current_signal != self.prev_trade_signal) or new_3020_candle or new_1510_candle:
                     self.last_trade_time = now
                     print(">> SELL signal detected (LL on 3020, LH on 1510)")
-                    self.sell_count += 1
+                    self.sell_count = getattr(self, 'sell_count', 0) + 1
                     self.counter -= 1
-                    self.prev_lbl_3020 = lbl_3020
-                    self.prev_lbl_1510 = lbl_1510
-                    self.prev_trade_signal = current_trade_signal
+                    self.prev_lbl_3020 = "LL"
+                    self.prev_lbl_1510 = "LH"
+                    self.prev_trade_signal = current_signal
                     return "SELL"
                 else:
-                    print("Sell signal repeated for same candle, ignoring.")
+                    print("Duplicate SELL signal, ignoring.")
             else:
-                print("Cannot sell before buying!")
+                print("Cannot SELL before BUY.")
 
         print("No new candle detected or no valid trade signal.")
         return None
