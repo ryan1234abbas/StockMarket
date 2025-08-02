@@ -542,7 +542,8 @@ class DetectionWorker(QThread):
         return merged
 class MarketWorker:
     def __init__(self):
-        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         self.app = QApplication.instance() or QApplication(sys.argv)
 
         self.offset_x = 100
