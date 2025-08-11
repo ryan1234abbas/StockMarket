@@ -14,6 +14,9 @@ import pyautogui
 import glob
 from collections import deque
 from collections import OrderedDict
+import signal
+import select
+
 
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
@@ -315,14 +318,14 @@ class DetectionWorker(QThread):
     def preprocess_for_ocr(patch):
         # Convert to grayscale
         gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-        # Apply thresholding to enhance text visibility
+        # enhance text visibility
         _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         return thresh
     
     def classify_patch(self, main_patch_gray):
         best_label = None
         best_confidence = 0
-        threshold = 0.93  # Minimum confidence required
+        threshold = 0.93  
 
         for lbl in self.templates:
             for tmpl in self.templates[lbl]:
@@ -367,80 +370,107 @@ class DetectionWorker(QThread):
 
         return img[top:bottom, left:right].copy()
 
+
     def run(self):
+        
+        def key_pressed():
+            return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
+
+        sys.stdin = open('/dev/tty')  # Ensure terminal input
         zoom = 0.6
-        while self.running:
-            start_time = time.time()
+        total_processing_time = 0
 
-            # LEFT REGION
-            lw_orig = self.width // 2
-            lh_orig = self.height
-            lw_zoom = int(lw_orig / zoom)
-            lh_zoom = int(lh_orig / zoom)
-            left_monitor = {
-                "top": self.offset_y - (lh_zoom - lh_orig) // 2,
-                "left": (self.offset_x - (lw_zoom - lw_orig) // 2) + 20,
-                "width": lw_zoom - 70,
-                "height": lh_zoom
-            }
+        try:
+            while self.running:
+                start_time = time.time()
 
-            # RIGHT REGION
-            rw_orig = self.width - lw_orig
-            rh_orig = self.height
-            rw_zoom = int(rw_orig / zoom)
-            rh_zoom = int(rh_orig / zoom)
-            right_monitor = {
-                "top": self.offset_y - (rh_zoom - rh_orig) // 2,
-                "left": (self.offset_x + lw_orig - (rw_zoom - rw_orig) // 2) + 180,
-                "width": rw_zoom - 100,
-                "height": rh_zoom
-            }
+                # LEFT REGION
+                lw_orig = self.width // 2
+                lh_orig = self.height
+                lw_zoom = int(lw_orig / zoom)
+                lh_zoom = int(lh_orig / zoom)
+                left_monitor = {
+                    "top": self.offset_y - (lh_zoom - lh_orig) // 2,
+                    "left": (self.offset_x - (lw_zoom - lw_orig) // 2) + 20,
+                    "width": lw_zoom - 70,
+                    "height": lh_zoom
+                }
 
-            left_img = np.array(self.sct.grab(left_monitor))[:, :, :3]
-            right_img = np.array(self.sct.grab(right_monitor))[:, :, :3]
+                # RIGHT REGION
+                rw_orig = self.width - lw_orig
+                rh_orig = self.height
+                rw_zoom = int(rw_orig / zoom)
+                rh_zoom = int(rh_orig / zoom)
+                right_monitor = {
+                    "top": self.offset_y - (rh_zoom - rh_orig) // 2,
+                    "left": (self.offset_x + lw_orig - (rw_zoom - rw_orig) // 2) + 180,
+                    "width": rw_zoom - 100,
+                    "height": rh_zoom
+                }
 
-            m32 = lambda v: ((v + 31) // 32) * 32
-            left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
-            right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
+                left_img = np.array(self.sct.grab(left_monitor))[:, :, :3]
+                right_img = np.array(self.sct.grab(right_monitor))[:, :, :3]
 
-            left_results = self.model.predict(
-                source=left_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=left_sz)
-            right_results = self.model.predict(
-                source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
+                m32 = lambda v: ((v + 31) // 32) * 32
+                left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
+                right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
 
-            left_boxes, left_scores = self.process_results(left_results)
-            right_boxes, right_scores = self.process_results(right_results)
+                left_results = self.model.predict(
+                    source=left_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=left_sz)
+                right_results = self.model.predict(
+                    source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
 
-            keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
-            merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
+                left_boxes, left_scores = self.process_results(left_results)
+                right_boxes, right_scores = self.process_results(right_results)
 
-            keep_right = self.non_max_suppression_fast(right_boxes, right_scores, iou_thresh=0.5)
-            merged_right = self.merge_vertically_close_boxes([right_boxes[i] for i in keep_right])
+                keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
+                merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
 
-            # Call analyze_candles_tm with all required args
-            decision = self.analyze_candles_tm(left_img, merged_left, right_img, merged_right, self.templates)
+                keep_right = self.non_max_suppression_fast(right_boxes, right_scores, iou_thresh=0.5)
+                merged_right = self.merge_vertically_close_boxes([right_boxes[i] for i in keep_right])
 
-            if decision:
-                print(f"Trade decision: {decision}")
+                decision = self.analyze_candles_tm(left_img, merged_left, right_img, merged_right, self.templates)
+
+                if decision:
+                    print(f"Trade decision: {decision}")
                 print(f"Number of buys: {self.buy_count}")
                 print(f"Number of sells: {self.sell_count}")
-            else:
-                print(f"Number of buys: {self.buy_count}")
-                print(f"Number of sells: {self.sell_count}")
+
+                left_img = self.draw_coords_only(left_img, merged_left)
+                right_img = self.draw_coords_only(right_img, merged_right)
+
+                self.update_left.emit(left_img, merged_left)
+                self.update_right.emit(right_img, merged_right)
+
+                self.frame_count += 1
+                #calculate time to process each frame
+                frame_processing_time = time.time() - start_time
+                print(f"\nFrame {self.frame_count} processed in {frame_processing_time:.2f} sec.")
                 
-            # Draw bounding boxes on images for visualization
-            left_img = self.draw_coords_only(left_img, merged_left)
-            right_img = self.draw_coords_only(right_img, merged_right)
+                #calculate total program runtime
+                total_processing_time += frame_processing_time
+                
+                #calculate average runtime per frame
+                avg_processing_time = total_processing_time / self.frame_count
+                
+                #give cpu time to process quit command
+                time.sleep(0.001)
+                
+                if key_pressed():
+                    key = sys.stdin.readline().strip().lower()
+                    if key == 'q':
+                        print("\nQ PRESSED...STOPPING PROGRAM...")
+                        print(f"Number of frames processed: {self.frame_count:.2f} seconds")
+                        print(f"Runtime : {total_processing_time:.2f} seconds")
+                        print(f"Average runtime per frame: {avg_processing_time:.2f} seconds")
+                        self.running = False
+                        break
+                
+        except KeyboardInterrupt:
+            print("KeyboardInterrupt caught, exiting...")
+        finally:
+            self.finished.emit()
 
-            # Emit updated images with bounding boxes
-            self.update_left.emit(left_img, merged_left)
-            self.update_right.emit(right_img, merged_right)
-
-            self.frame_count += 1
-            print(f"\nFrame {self.frame_count} processed in {time.time() - start_time:.2f} sec.")
-            #time.sleep(2)
-            
-        self.finished.emit()
 
     def process_results(self, results):
         boxes = []
@@ -542,8 +572,8 @@ class DetectionWorker(QThread):
         return merged
 class MarketWorker:
     def __init__(self):
-        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
-        self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         self.app = QApplication.instance() or QApplication(sys.argv)
 
         self.offset_x = 100
