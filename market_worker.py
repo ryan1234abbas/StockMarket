@@ -460,7 +460,7 @@ class DetectionWorker(QThread):
                     key = sys.stdin.readline().strip().lower()
                     if key == 'q':
                         print("\nQ PRESSED...STOPPING PROGRAM...")
-                        print(f"Number of frames processed: {self.frame_count:.2f} seconds")
+                        print(f"Number of frames processed: {self.frame_count} frames")
                         print(f"Runtime : {total_processing_time:.2f} seconds")
                         print(f"Average runtime per frame: {avg_processing_time:.2f} seconds")
                         self.running = False
@@ -470,7 +470,6 @@ class DetectionWorker(QThread):
             print("KeyboardInterrupt caught, exiting...")
         finally:
             self.finished.emit()
-
 
     def process_results(self, results):
         boxes = []
