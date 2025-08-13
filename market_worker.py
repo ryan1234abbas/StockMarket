@@ -32,7 +32,6 @@ class DetectionWorker(QThread):
         self.height = height
         self.total_frames = total_frames
         self.frame_count = 0
-        self.sct = mss.mss()
         self.running = True
         self.prev_hhll_label   = None   # last HH or LL actually traded
         self.prev_hllh_label = None
@@ -373,103 +372,119 @@ class DetectionWorker(QThread):
 
     def run(self):
         
-        def key_pressed():
-            return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
+        if os.name == "posix":
+            def key_pressed():
+                return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
+        else:
+            import msvcrt
+            def key_pressed():
+                return msvcrt.kbhit()
 
-        sys.stdin = open('/dev/tty')  # Ensure terminal input
+        if os.name == "posix":
+            try:
+                sys.stdin = open('/dev/tty')  # Ensure terminal input on Unix
+            except Exception as e:
+                print(f"Warning: could not open /dev/tty: {e}")
+
         zoom = 0.6
         total_processing_time = 0
 
-        try:
-            while self.running:
-                start_time = time.time()
+        with mss.mss() as sct:
+            # Use local sct instead of self.sct to avoid cross-thread issues
+            try:
+                while self.running:
+                    start_time = time.time()
 
-                # LEFT REGION
-                lw_orig = self.width // 2
-                lh_orig = self.height
-                lw_zoom = int(lw_orig / zoom)
-                lh_zoom = int(lh_orig / zoom)
-                left_monitor = {
-                    "top": self.offset_y - (lh_zoom - lh_orig) // 2,
-                    "left": (self.offset_x - (lw_zoom - lw_orig) // 2) + 20,
-                    "width": lw_zoom - 70,
-                    "height": lh_zoom
-                }
+                    # Define capture regions
+                    lw_orig = self.width // 2
+                    lh_orig = self.height
+                    lw_zoom = int(lw_orig / zoom)
+                    lh_zoom = int(lh_orig / zoom)
+                    left_monitor = {
+                        "top": self.offset_y - (lh_zoom - lh_orig) // 2,
+                        "left": (self.offset_x - (lw_zoom - lw_orig) // 2) + 20,
+                        "width": lw_zoom - 70,
+                        "height": lh_zoom
+                    }
 
-                # RIGHT REGION
-                rw_orig = self.width - lw_orig
-                rh_orig = self.height
-                rw_zoom = int(rw_orig / zoom)
-                rh_zoom = int(rh_orig / zoom)
-                right_monitor = {
-                    "top": self.offset_y - (rh_zoom - rh_orig) // 2,
-                    "left": (self.offset_x + lw_orig - (rw_zoom - rw_orig) // 2) + 180,
-                    "width": rw_zoom - 100,
-                    "height": rh_zoom
-                }
+                    rw_orig = self.width - lw_orig
+                    rh_orig = self.height
+                    rw_zoom = int(rw_orig / zoom)
+                    rh_zoom = int(rh_orig / zoom)
+                    right_monitor = {
+                        "top": self.offset_y - (rh_zoom - rh_orig) // 2,
+                        "left": (self.offset_x + lw_orig - (rw_zoom - rw_orig) // 2) + 180,
+                        "width": rw_zoom - 100,
+                        "height": rh_zoom
+                    }
 
-                left_img = np.array(self.sct.grab(left_monitor))[:, :, :3]
-                right_img = np.array(self.sct.grab(right_monitor))[:, :, :3]
+                    # Grab screenshots
+                    left_img = np.array(sct.grab(left_monitor))[:, :, :3]
+                    right_img = np.array(sct.grab(right_monitor))[:, :, :3]
 
-                m32 = lambda v: ((v + 31) // 32) * 32
-                left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
-                right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
+                    m32 = lambda v: ((v + 31) // 32) * 32
+                    left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
+                    right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
 
-                left_results = self.model.predict(
-                    source=left_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=left_sz)
-                right_results = self.model.predict(
-                    source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
+                    # Run your model predictions
+                    left_results = self.model.predict(
+                        source=left_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=left_sz)
+                    right_results = self.model.predict(
+                        source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
 
-                left_boxes, left_scores = self.process_results(left_results)
-                right_boxes, right_scores = self.process_results(right_results)
+                    # Process results
+                    left_boxes, left_scores = self.process_results(left_results)
+                    right_boxes, right_scores = self.process_results(right_results)
 
-                keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
-                merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
+                    keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
+                    merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
 
-                keep_right = self.non_max_suppression_fast(right_boxes, right_scores, iou_thresh=0.5)
-                merged_right = self.merge_vertically_close_boxes([right_boxes[i] for i in keep_right])
+                    keep_right = self.non_max_suppression_fast(right_boxes, right_scores, iou_thresh=0.5)
+                    merged_right = self.merge_vertically_close_boxes([right_boxes[i] for i in keep_right])
 
-                decision = self.analyze_candles_tm(left_img, merged_left, right_img, merged_right, self.templates)
+                    decision = self.analyze_candles_tm(left_img, merged_left, right_img, merged_right, self.templates)
 
-                if decision:
-                    print(f"Trade decision: {decision}")
-                print(f"Number of buys: {self.buy_count}")
-                print(f"Number of sells: {self.sell_count}")
+                    if decision:
+                        print(f"Trade decision: {decision}")
+                    print(f"Number of buys: {self.buy_count}")
+                    print(f"Number of sells: {self.sell_count}")
 
-                left_img = self.draw_coords_only(left_img, merged_left)
-                right_img = self.draw_coords_only(right_img, merged_right)
+                    left_img = self.draw_coords_only(left_img, merged_left)
+                    right_img = self.draw_coords_only(right_img, merged_right)
 
-                self.update_left.emit(left_img, merged_left)
-                self.update_right.emit(right_img, merged_right)
+                    self.update_left.emit(left_img, merged_left)
+                    self.update_right.emit(right_img, merged_right)
 
-                self.frame_count += 1
-                #calculate time to process each frame
-                frame_processing_time = time.time() - start_time
-                print(f"\nFrame {self.frame_count} processed in {frame_processing_time:.2f} sec.")
-                
-                #calculate total program runtime
-                total_processing_time += frame_processing_time
-                
-                #calculate average runtime per frame
-                avg_processing_time = total_processing_time / self.frame_count
-                
-                #give cpu time to process quit command
-                time.sleep(0.001)
-                
-                if key_pressed():
-                    key = sys.stdin.readline().strip().lower()
-                    if key == 'q':
-                        print("\nQ PRESSED...STOPPING PROGRAM...")
-                        print(f"Number of frames processed: {self.frame_count} frames")
-                        print(f"Runtime : {total_processing_time:.2f} seconds")
-                        print(f"Average runtime per frame: {avg_processing_time:.2f} seconds")
-                        self.running = False
-                        break
-                
-        except KeyboardInterrupt:
-            print("KeyboardInterrupt caught, exiting...")
-        finally:
-            self.finished.emit()
+                    self.frame_count += 1
+                    frame_processing_time = time.time() - start_time
+                    print(f"\nFrame {self.frame_count} processed in {frame_processing_time:.2f} sec.")
+
+                    total_processing_time += frame_processing_time
+                    avg_processing_time = total_processing_time / self.frame_count
+
+                    time.sleep(0.001)
+
+                    if key_pressed():
+                        #unix (macOS)
+                        if os.name == "posix":
+                            key = sys.stdin.readline().strip().lower()
+                        #windows
+                        else:
+                            key = msvcrt.getch().decode('utf-8').lower()
+
+                        if key == 'q':
+                            print("\nQ PRESSED...STOPPING PROGRAM...")
+                            print(f"Number of frames processed: {self.frame_count} frames")
+                            print(f"Runtime : {total_processing_time:.2f} seconds")
+                            print(f"Average runtime per frame: {avg_processing_time:.2f} seconds")
+                            self.running = False
+                            break
+
+            except KeyboardInterrupt:
+                print("KeyboardInterrupt caught, exiting...")
+            finally:
+                self.finished.emit()
+
 
     def process_results(self, results):
         boxes = []
@@ -571,8 +586,15 @@ class DetectionWorker(QThread):
         return merged
 class MarketWorker:
     def __init__(self):
-        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        #Ryan's IMAC
+        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        
+        #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
+        
+        #AP's Laptop
+        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        
         self.app = QApplication.instance() or QApplication(sys.argv)
 
         self.offset_x = 100
