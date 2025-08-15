@@ -49,19 +49,33 @@ class DetectionWorker(QThread):
         self.first_trade_done = False
         #balance speed with accuracy
         self.last_trade_time = 0
-        self.trade_cooldown = 6.5  
+
+        if platform.system() == "Darwin":
+            self.trade_cooldown = 6.5 
+        elif platform.system() == "Windows":
+            self.trade_cooldown = 8 
 
         #for debugging on gui screens
         # self.update_left.emit(debug_left, [])
         # self.update_right.emit(debug_right, [])
         
         self.templates = {}
-        for lbl in ("HH", "LL", "HL", "LH"):
-            template_files = glob.glob(f"templates/{lbl}/*.png")
-            if not template_files:
-                raise FileNotFoundError(f"No template images found in templates/{lbl}/")
-            self.templates[lbl] = [cv2.imread(t, cv2.IMREAD_GRAYSCALE) for t in template_files]
 
+        if platform.system() == "Darwin":
+            for lbl in ("HH", "LL", "HL", "LH"):
+                template_files = glob.glob(f"templates/{lbl}/*.png")
+                if not template_files:
+                    raise FileNotFoundError(f"No template images found in templates/{lbl}/")
+                self.templates[lbl] = [cv2.imread(t, cv2.IMREAD_GRAYSCALE) for t in template_files]
+        
+        elif platform.system() == "Windows": 
+            os.makedirs("templates_windows", exist_ok=True)
+            for lbl in ("HH", "LL", "HL", "LH"):
+                template_files = glob.glob(f"templates_windows/{lbl}/*.png")
+                if not template_files:
+                    raise FileNotFoundError(f"No template images found in templates_windows/{lbl}/")
+                self.templates[lbl] = [cv2.imread(t, cv2.IMREAD_GRAYSCALE) for t in template_files]
+                    
     def _scan_side(
         self,
         img: np.ndarray,
@@ -199,7 +213,7 @@ class DetectionWorker(QThread):
 
                     matches.append((label, (abs_x0, abs_y0, abs_x1, abs_y1)))
 
-                    print(f"{label_side} (right box): matched {label} with confidence {max_conf:.2f}")
+                    print(f"{label_side}: matched {label} with confidence {max_conf:.2f}")
 
         self.prev_candle_box = rightmost_box
 
@@ -642,13 +656,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
