@@ -16,7 +16,7 @@ from collections import deque
 from collections import OrderedDict
 import signal
 import select
-
+import platform
 
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
@@ -135,7 +135,7 @@ class DetectionWorker(QThread):
                 break
 
         return found_lbl
-            
+
     def scan_rightmost_candle(self, img, boxes, want_labels, debug_img, label_side, threshold=0.93):
         img_h, img_w = img.shape[:2]
 
@@ -152,11 +152,21 @@ class DetectionWorker(QThread):
         scan_x1 = img_w - right_edge_buffer
 
         center_y = (y0 + y1) // 2
-        box_height = 5000
+        box_height = 5000  # or any default
+
         scan_y0 = max(0, center_y - box_height // 2)
         scan_y1 = min(img_h, center_y + box_height // 2)
+
+        # Now apply extra height expansion
+        extra_height = 1000
+        scan_y0 = max(0, scan_y0 - extra_height // 2)
+        scan_y1 = min(img_h, scan_y1 + extra_height // 2)
+
         if scan_y1 - scan_y0 < 100:
             scan_y0 = max(0, scan_y1 - 100)
+
+        if platform.system() == "Windows":
+            scan_x1 = img_w
 
         cv2.rectangle(debug_img, (scan_x0, scan_y0), (scan_x1, scan_y1), (255, 0, 0), 2)
 
@@ -170,6 +180,9 @@ class DetectionWorker(QThread):
                 max_conf = 0
                 best_loc = None
                 for tmpl in self.templates[label]:
+                    # Skip template if bigger than patch
+                    if gray_patch.shape[0] < tmpl.shape[0] or gray_patch.shape[1] < tmpl.shape[1]:
+                        continue
                     res = cv2.matchTemplate(gray_patch, tmpl, cv2.TM_CCOEFF_NORMED)
                     _, curr_conf, _, max_loc = cv2.minMaxLoc(res)
                     if curr_conf > max_conf:
@@ -192,6 +205,7 @@ class DetectionWorker(QThread):
 
         # Return list of all matched labels with their boxes, plus the rightmost candle box for reference
         return (None, None), (matches, rightmost_box), debug_img
+
 
     def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right,
                         templates, threshold=0.93, w_crop=130, h_crop=100):
@@ -388,6 +402,7 @@ class DetectionWorker(QThread):
 
         zoom = 0.6
         total_processing_time = 0
+        extra_height = 100
 
         with mss.mss() as sct:
             # Use local sct instead of self.sct to avoid cross-thread issues
@@ -395,28 +410,68 @@ class DetectionWorker(QThread):
                 while self.running:
                     start_time = time.time()
 
-                    # Define capture regions
+                    # Zoom-adjusted dimensions
                     lw_orig = self.width // 2
                     lh_orig = self.height
                     lw_zoom = int(lw_orig / zoom)
-                    lh_zoom = int(lh_orig / zoom)
-                    left_monitor = {
-                        "top": self.offset_y - (lh_zoom - lh_orig) // 2,
-                        "left": (self.offset_x - (lw_zoom - lw_orig) // 2) + 20,
-                        "width": lw_zoom - 70,
-                        "height": lh_zoom
-                    }
+                    lh_zoom = int(lh_orig / zoom) + extra_height
 
                     rw_orig = self.width - lw_orig
                     rh_orig = self.height
                     rw_zoom = int(rw_orig / zoom)
-                    rh_zoom = int(rh_orig / zoom)
-                    right_monitor = {
-                        "top": self.offset_y - (rh_zoom - rh_orig) // 2,
-                        "left": (self.offset_x + lw_orig - (rw_zoom - rw_orig) // 2) + 180,
-                        "width": rw_zoom - 100,
-                        "height": rh_zoom
+                    rh_zoom = int(rh_orig / zoom) + extra_height
+
+                    # --- Platform-specific offsets and trims ---
+                    if platform.system() == "Darwin":  # macOS
+                        left_x_offset = 10
+                        left_width_trim = 60
+                        right_x_offset = 140
+                        right_width_trim = 80
+                        height_inc = 0
+                        right_inc = 0
+                        extra_height = 0
+                        left_trim_amount = 0
+                        vertical_shift = 0
+                    
+                    elif platform.system() == "Windows":
+                        left_x_offset = 20
+                        left_width_trim = 70
+                        right_x_offset = 270
+                        right_width_trim = 50
+                        height_inc = 100
+                        right_inc = 60  
+                        extra_height = 100
+                        left_trim_amount = 50
+                        vertical_shift = 50
+
+                    else:
+                        # Defaults for other OSes (Linux, etc.)
+                        left_x_offset = 15
+                        left_width_trim = 65
+                        right_x_offset = 160
+                        right_width_trim = 90
+                        height_inc = 0
+                        right_inc = 0
+                        extra_height = 100
+                        left_trim_amount = 50
+                        vertical_shift = 0
+
+                    # --- Dynamic Left Monitor Region ---
+                    left_monitor = {
+                        "top": self.offset_y - (lh_zoom - lh_orig) // 2 + height_inc,
+                        "left": (self.offset_x - (lw_zoom - lw_orig) // 2) + left_x_offset,
+                        "width": lw_zoom - left_width_trim + right_inc,
+                        "height": lh_zoom 
                     }
+
+                    # --- Dynamic Right Monitor Region ---
+                    right_monitor = {
+                        "top": self.offset_y - (rh_zoom - rh_orig) // 2 + vertical_shift,  
+                        "left": (self.offset_x + lw_orig - (rw_zoom - rw_orig) // 2) + right_x_offset + left_trim_amount,
+                        "width": (rw_zoom - right_width_trim) - left_trim_amount,
+                        "height": rh_zoom + extra_height
+                    }
+
 
                     # Grab screenshots
                     left_img = np.array(sct.grab(left_monitor))[:, :, :3]
@@ -587,13 +642,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
