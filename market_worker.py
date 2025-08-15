@@ -17,6 +17,12 @@ from collections import OrderedDict
 import signal
 import select
 import platform
+import platform
+
+if platform.system() == "Windows":
+    import msvcrt
+else:
+    msvcrt = None  
 
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
@@ -229,8 +235,6 @@ class DetectionWorker(QThread):
 
         def is_label_latest_by_coords(labels_with_boxes, desired_label):
             """
-            labels_with_boxes: list of (label_str, box)
-            box = (x0, y0, x1, y1)
             Returns True if the label with the largest x1 equals desired_label.
             """
             if not labels_with_boxes:
@@ -303,7 +307,7 @@ class DetectionWorker(QThread):
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
         # --- Trading logic ---
-
+        
         # BUY: rightmost HH in 3020 and HL in 1510, no more recent conflicting labels
         if (is_label_latest_by_coords(labels_3020, "HH") and
             is_label_latest_by_coords(labels_1510, "HL")):
@@ -404,7 +408,6 @@ class DetectionWorker(QThread):
             def key_pressed():
                 return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
         else:
-            import msvcrt
             def key_pressed():
                 return msvcrt.kbhit()
 
@@ -656,13 +659,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
