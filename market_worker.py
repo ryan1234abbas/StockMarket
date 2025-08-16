@@ -167,30 +167,29 @@ class DetectionWorker(QThread):
 
         if not boxes:
             print(f"{label_side}: No candles detected.")
-            return (None, None), ([], None), debug_img  # empty list instead of single label
+            return (None, None), ([], None), debug_img
 
-        # Pick rightmost box but stabilize if previous exists
+        # --- Pick rightmost candle (stabilized with previous box) ---
         if hasattr(self, 'prev_candle_box') and self.prev_candle_box is not None:
-            prev_x0, prev_y0, prev_x1, prev_y1 = self.prev_candle_box
-            # choose box closest to previous x0
+            prev_x0, _, _, _ = self.prev_candle_box
             rightmost_box = min(boxes, key=lambda b: abs(b[0] - prev_x0))
         else:
             rightmost_box = max(boxes, key=lambda b: b[0])
 
         x0, y0, x1, y1 = rightmost_box
 
+        # --- Define scan region ---
         scan_margin = 35
         right_edge_buffer = 70
         scan_x0 = max(0, x1 - scan_margin)
         scan_x1 = img_w - right_edge_buffer
 
         center_y = (y0 + y1) // 2
-        box_height = 5000  # or any default
-
+        box_height = 5000  
         scan_y0 = max(0, center_y - box_height // 2)
         scan_y1 = min(img_h, center_y + box_height // 2)
 
-        # Now apply extra height expansion
+        # Expand vertically
         extra_height = 1000
         scan_y0 = max(0, scan_y0 - extra_height // 2)
         scan_y1 = min(img_h, scan_y1 + extra_height // 2)
@@ -198,49 +197,52 @@ class DetectionWorker(QThread):
         if scan_y1 - scan_y0 < 100:
             scan_y0 = max(0, scan_y1 - 100)
 
+        # OS-specific adjustment
         if platform.system() == "Darwin":  # macOS
-            scan_x0 = max(0, x1 - scan_margin)  
-            scan_x1 = img_w 
-            
+            scan_x0 = max(0, x1 - scan_margin)
+            scan_x1 = img_w
         elif platform.system() == "Windows":
             scan_x1 = img_w
 
+        # Draw debug box
         cv2.rectangle(debug_img, (scan_x0, scan_y0), (scan_x1, scan_y1), (255, 0, 0), 2)
 
         patch = img[scan_y0:scan_y1, scan_x0:scan_x1]
-        matches = []  # list to hold (label, box) tuples
+        matches = []  # (label, score, abs_box)
 
         if patch.size > 0:
             gray_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
 
             for label in want_labels:
-                max_conf = 0
-                best_loc = None
+                best_score, best_loc = 0, None
                 for tmpl in self.templates[label]:
-                    # Skip template if bigger than patch
                     if gray_patch.shape[0] < tmpl.shape[0] or gray_patch.shape[1] < tmpl.shape[1]:
                         continue
                     res = cv2.matchTemplate(gray_patch, tmpl, cv2.TM_CCOEFF_NORMED)
-                    _, curr_conf, _, max_loc = cv2.minMaxLoc(res)
-                    if curr_conf > max_conf:
-                        max_conf = curr_conf
-                        best_loc = max_loc  # location of best match for this template
+                    _, score, _, loc = cv2.minMaxLoc(res)
+                    if score > best_score:
+                        best_score, best_loc = score, loc
 
-                if max_conf >= threshold and best_loc is not None:
-                    # Calculate absolute box coordinates of detected label inside img
+                if best_score >= threshold and best_loc is not None:
                     tmpl_h, tmpl_w = self.templates[label][0].shape[:2]
                     abs_x0 = scan_x0 + best_loc[0]
                     abs_y0 = scan_y0 + best_loc[1]
                     abs_x1 = abs_x0 + tmpl_w
                     abs_y1 = abs_y0 + tmpl_h
-
-                    matches.append((label, (abs_x0, abs_y0, abs_x1, abs_y1)))
-
-                    #print(f"{label_side}: matched {label} with confidence {max_conf:.2f}")
+                    matches.append((label, best_score, (abs_x0, abs_y0, abs_x1, abs_y1)))
 
         self.prev_candle_box = rightmost_box
 
-        # Return list of all matched labels with their boxes, plus the rightmost candle box for reference
+        # --- Post-process matches: disambiguate HL vs LH ---
+        if any(lbl in [m[0] for m in matches] for lbl in ["HL", "LH"]):
+            sorted_by_y = sorted([m for m in matches if m[0] in ["HL", "LH"]], key=lambda m: m[2][1])
+            if len(sorted_by_y) == 2:
+                hl, lh = sorted_by_y
+                # enforce HL is above LH
+                if hl[0] == "LH" and lh[0] == "HL":
+                    print(f"[DEBUG] Swapping HL/LH due to vertical order issue on {label_side}")
+                    matches = [( "HL" if m == lh else "LH" if m == hl else m[0], m[1], m[2]) for m in matches]
+
         return (None, None), (matches, rightmost_box), debug_img
 
 
