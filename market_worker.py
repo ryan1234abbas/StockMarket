@@ -17,7 +17,8 @@ from collections import OrderedDict
 import signal
 import select
 import platform
-import platform
+import threading
+
 
 if platform.system() == "Windows":
     import msvcrt
@@ -239,25 +240,20 @@ class DetectionWorker(QThread):
         # Return list of all matched labels with their boxes, plus the rightmost candle box for reference
         return (None, None), (matches, rightmost_box), debug_img
 
+
     def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right,
                             templates, threshold=0.93, w_crop=130, h_crop=100):
 
         def box_width(box):
             return (box[2] - box[0]) if box else 0
 
-        # --- Helper: get rightmost label with highest confidence if tied ---
         def get_rightmost_label(labels):
             if not labels:
                 return None
-            # Find max right edge (x1)
             rightmost_x1 = max(lb[1][2] for lb in labels)
-            # Candidates with that x1
             candidates = [lb for lb in labels if lb[1][2] == rightmost_x1]
-            # Pick the first candidate (no confidence available)
-            rightmost_label = candidates[0][0]
-            return rightmost_label
+            return candidates[0][0]
 
-        # --- Check if desired label is the rightmost ---
         def is_label_latest_by_coords(labels_with_boxes, desired_label):
             return get_rightmost_label(labels_with_boxes) == desired_label
 
@@ -266,12 +262,31 @@ class DetectionWorker(QThread):
             print("Cooldown active, skipping trade.")
             return None
 
-        # --- Detection: get all matched labels with boxes ---
-        (_, _), (labels_3020, box_3020), debug_3020 = self.scan_rightmost_candle(
-            left_img, merged_left, ("HH", "LL", "HL", "LH"), left_img.copy(), "3020", threshold)
+        # --- THREAD TARGETS ---
+        left_result = {}
+        right_result = {}
 
-        (_, _), (labels_1510, box_1510), debug_1510 = self.scan_rightmost_candle(
-            right_img, merged_right, ("HH", "LL", "HL", "LH"), right_img.copy(), "1510", threshold)
+        def scan_left():
+            (_, _), (labels, box), debug = self.scan_rightmost_candle(
+                left_img, merged_left, ("HH", "LL", "HL", "LH"), left_img.copy(), "3020", threshold)
+            left_result.update({'labels': labels, 'box': box, 'debug': debug})
+
+        def scan_right():
+            (_, _), (labels, box), debug = self.scan_rightmost_candle(
+                right_img, merged_right, ("HH", "LL", "HL", "LH"), right_img.copy(), "1510", threshold)
+            right_result.update({'labels': labels, 'box': box, 'debug': debug})
+
+        # --- START THREADS ---
+        t_left = threading.Thread(target=scan_left)
+        t_right = threading.Thread(target=scan_right)
+        t_left.start()
+        t_right.start()
+        t_left.join()
+        t_right.join()
+
+        # --- EXTRACT RESULTS ---
+        labels_3020, box_3020, debug_3020 = left_result['labels'], left_result['box'], left_result['debug']
+        labels_1510, box_1510, debug_1510 = right_result['labels'], right_result['box'], right_result['debug']
 
         # --- Width tracking ---
         curr_width_3020 = box_width(box_3020)
@@ -326,9 +341,8 @@ class DetectionWorker(QThread):
         print(f"[DEBUG] Rightmost label 1510: {rightmost_lbl_1510}")
 
         # --- Trading logic ---
-        # BUY: rightmost HH in 3020 and HL in 1510
         if is_label_latest_by_coords(labels_3020, "HH") and is_label_latest_by_coords(labels_1510, "HL"):
-            if (current_signal != getattr(self, 'prev_trade_signal', None)) or new_3020_candle or new_1510_candle:
+            if (current_signal != getattr(self, 'prev_trade_signal', None)):
                 self.last_trade_time = now
                 print(">> BUY signal detected (HH on 3020, HL on 1510)")
                 self.buy_count = getattr(self, 'buy_count', 0) + 1
@@ -340,10 +354,9 @@ class DetectionWorker(QThread):
             else:
                 print("Duplicate BUY signal, ignoring.")
 
-        # SELL: rightmost LL in 3020 and LH in 1510
         elif is_label_latest_by_coords(labels_3020, "LL") and is_label_latest_by_coords(labels_1510, "LH"):
             if getattr(self, 'counter', 0) > 0:
-                if (current_signal != getattr(self, 'prev_trade_signal', None)) or new_3020_candle or new_1510_candle:
+                if (current_signal != getattr(self, 'prev_trade_signal', None)):
                     self.last_trade_time = now
                     print(">> SELL signal detected (LL on 3020, LH on 1510)")
                     self.sell_count = getattr(self, 'sell_count', 0) + 1
@@ -359,7 +372,6 @@ class DetectionWorker(QThread):
 
         print("No new candle detected or no valid trade signal.")
         return None
-
 
 
     def preprocess_for_ocr(patch):
@@ -390,7 +402,7 @@ class DetectionWorker(QThread):
 
     def crop(self,
             img: np.ndarray,
-            box,                   # [x1, y1, x2, y2]
+            box, # [x1, y1, x2, y2]
             width: int | None = None,
             height: int = 200,
             pad_x: int = 10,
@@ -504,8 +516,6 @@ class DetectionWorker(QThread):
                         "width": (rw_zoom - right_width_trim) - left_trim_amount,
                         "height": rh_zoom + extra_height
                     }
-
-
                     # Grab screenshots
                     left_img = np.array(sct.grab(left_monitor))[:, :, :3]
                     right_img = np.array(sct.grab(right_monitor))[:, :, :3]
