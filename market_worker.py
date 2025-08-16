@@ -59,7 +59,9 @@ class DetectionWorker(QThread):
         if platform.system() == "Darwin":
             self.trade_cooldown = 6.5 
         elif platform.system() == "Windows":
-            self.trade_cooldown = 8 
+            self.trade_cooldown = 6.5
+        else:
+            self.trade_cooldonwn = 6.5 
 
         #for debugging on gui screens
         # self.update_left.emit(debug_left, [])
@@ -230,7 +232,7 @@ class DetectionWorker(QThread):
 
                     matches.append((label, (abs_x0, abs_y0, abs_x1, abs_y1)))
 
-                    print(f"{label_side}: matched {label} with confidence {max_conf:.2f}")
+                    #print(f"{label_side}: matched {label} with confidence {max_conf:.2f}")
 
         self.prev_candle_box = rightmost_box
 
@@ -319,9 +321,9 @@ class DetectionWorker(QThread):
         rightmost_lbl_1510 = get_rightmost_label(labels_1510)
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
-        # # --- Debug prints ---
-        # print(f"[DEBUG] Rightmost label 3020: {rightmost_lbl_3020}")
-        # print(f"[DEBUG] Rightmost label 1510: {rightmost_lbl_1510}")
+        # --- Debug prints ---
+        print(f"[DEBUG] Rightmost label 3020: {rightmost_lbl_3020}")
+        print(f"[DEBUG] Rightmost label 1510: {rightmost_lbl_1510}")
 
         # --- Trading logic ---
         # BUY: rightmost HH in 3020 and HL in 1510
