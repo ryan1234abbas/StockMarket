@@ -56,6 +56,9 @@ class DetectionWorker(QThread):
         self.first_trade_done = False
         #balance speed with accuracy
         self.last_trade_time = 0
+        self.cached_buy_btn = None
+        self.cached_sell_btn = None
+
 
         if platform.system() == "Darwin":
             self.trade_cooldown = 6.5 
@@ -259,7 +262,7 @@ class DetectionWorker(QThread):
 
         now = time.time()
         if now - getattr(self, 'last_trade_time', 0) < getattr(self, 'trade_cooldown', 0):
-            print("Cooldown active, skipping trade.")
+            print("Cooldown Active.")
             return None
 
         # --- THREAD TARGETS ---
@@ -350,6 +353,17 @@ class DetectionWorker(QThread):
                 self.prev_lbl_3020 = "HH"
                 self.prev_lbl_1510 = "HL"
                 self.prev_trade_signal = current_signal
+                
+                buy_btn = self.cached_buy_btn
+                if buy_btn is None:  
+                    buy_btn = pyautogui.locateCenterOnScreen('buy_sell/buy.png', confidence=0.8)
+                    if buy_btn:
+                        self.cached_buy_btn = buy_btn  # save it for next time
+
+                if buy_btn:
+                    pyautogui.click(buy_btn)
+                else:
+                    print("Buy Transaction Failed")
                 return "BUY"
             else:
                 print("Duplicate BUY signal, ignoring.")
@@ -364,6 +378,18 @@ class DetectionWorker(QThread):
                     self.prev_lbl_3020 = "LL"
                     self.prev_lbl_1510 = "LH"
                     self.prev_trade_signal = current_signal
+                    
+                    #click on sell market btn
+                    sell_btn = self.cached_sell_btn
+                    if sell_btn is None:  
+                        sell_btn = pyautogui.locateCenterOnScreen('buy_sell/sell.png', confidence=0.8)
+                        if sell_btn:
+                            self.cached_sell_btn = sell_btn  # save it for next time
+
+                    if sell_btn:
+                        pyautogui.click(sell_btn)
+                    else:
+                        print("Sell Transaction Failed")
                     return "SELL"
                 else:
                     print("Duplicate SELL signal, ignoring.")
