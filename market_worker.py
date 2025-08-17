@@ -204,7 +204,8 @@ class DetectionWorker(QThread):
             
         elif platform.system() == "Windows":
             scan_x1 = img_w
-            threshold = 0.8
+            scan_x0 += 20
+            threshold = 0.93
 
         cv2.rectangle(debug_img, (scan_x0, scan_y0), (scan_x1, scan_y1), (255, 0, 0), 2)
 
@@ -458,106 +459,104 @@ class DetectionWorker(QThread):
 
 
     def run(self):
-        
+
+        # --- Key press detection ---
         if os.name == "posix":
+            import select
             def key_pressed():
                 return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
-        else:
-            def key_pressed():
-                return msvcrt.kbhit()
-
-        if os.name == "posix":
             try:
                 sys.stdin = open('/dev/tty')  # Ensure terminal input on Unix
             except Exception as e:
                 print(f"Warning: could not open /dev/tty: {e}")
+        else:
+            import msvcrt
+            def key_pressed():
+                return msvcrt.kbhit()
 
-        zoom = 0.6
         total_processing_time = 0
-        extra_height = 100
+
+        def get_window_bounds(title):
+            """Detect window position and size dynamically per OS"""
+            system = platform.system()
+            if system == "Windows":
+                try:
+                    import pygetwindow as gw
+                    win = gw.getWindowsWithTitle(title)
+                    if win:
+                        w = win[0]
+                        return w.left, w.top, w.width, w.height
+                except Exception:
+                    return 0, 0, 800, 600  # fallback default
+            elif system == "Darwin":
+                # macOS: use AppleScript
+                import subprocess
+                script = f'''
+                tell application "System Events"
+                    tell application process "{title}"
+                        set frontmost to true
+                        tell window 1
+                            set {{"xPos:", position, "sizeVal:", size}}
+                        end tell
+                    end tell
+                end tell
+                '''
+                try:
+                    res = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+                    # Parse res.stdout to x, y, width, height
+                    # Placeholder fallback for now:
+                    return 0, 0, 1300, 1300
+                except Exception:
+                    return 0, 0, 1300, 1300
+            else:
+                # Linux fallback
+                return 0, 0, 800, 600
 
         with mss.mss() as sct:
-            # Use local sct instead of self.sct to avoid cross-thread issues
             try:
                 while self.running:
                     start_time = time.time()
 
-                    # Zoom-adjusted dimensions
-                    lw_orig = self.width // 2
-                    lh_orig = self.height
-                    lw_zoom = int(lw_orig / zoom)
-                    lh_zoom = int(lh_orig / zoom) + extra_height
+                    # --- Detect app window dynamically ---
+                    self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("QuickTime Player")
 
-                    rw_orig = self.width - lw_orig
-                    rh_orig = self.height
-                    rw_zoom = int(rw_orig / zoom)
-                    rh_zoom = int(rh_orig / zoom) + extra_height
+                    # --- Define dynamic monitor regions ---
+                    trim_right_ratio = 0.30   
+                    trim_bottom_ratio = 0.47
+                    extra_height_ratio = 0.0  
+                    shift_left_ratio = 0.2 
 
-                    # --- Platform-specific offsets and trims ---
-                    if platform.system() == "Darwin":  # macOS
-                        left_x_offset = 10
-                        left_width_trim = 60
-                        right_x_offset = 140
-                        right_width_trim = 80
-                        height_inc = 0
-                        right_inc = 0
-                        extra_height = 0
-                        left_trim_amount = 0
-                        vertical_shift = 0
-                    
-                    elif platform.system() == "Windows":
-                        left_x_offset = 20
-                        left_width_trim = 70
-                        right_x_offset = 270
-                        right_width_trim = 50
-                        height_inc = 100
-                        right_inc = 60  
-                        extra_height = 100
-                        left_trim_amount = 50
-                        vertical_shift = 50
 
-                    else:
-                        # Defaults for other OSes (Linux, etc.)
-                        left_x_offset = 15
-                        left_width_trim = 65
-                        right_x_offset = 160
-                        right_width_trim = 90
-                        height_inc = 0
-                        right_inc = 0
-                        extra_height = 100
-                        left_trim_amount = 50
-                        vertical_shift = 0
-
-                    # --- Dynamic Left Monitor Region ---
                     left_monitor = {
-                        "top": self.offset_y - (lh_zoom - lh_orig) // 2 + height_inc,
-                        "left": (self.offset_x - (lw_zoom - lw_orig) // 2) + left_x_offset,
-                        "width": lw_zoom - left_width_trim + right_inc,
-                        "height": lh_zoom 
+                        "top": self.offset_y,
+                        "left": self.offset_x,
+                        "width": int(self.width * 0.5 * (1 - trim_right_ratio)),
+                        "height": int(self.height * (1 + extra_height_ratio) * (1 - trim_bottom_ratio))
                     }
 
-                    # --- Dynamic Right Monitor Region ---
                     right_monitor = {
-                        "top": self.offset_y - (rh_zoom - rh_orig) // 2 + vertical_shift,  
-                        "left": (self.offset_x + lw_orig - (rw_zoom - rw_orig) // 2) + right_x_offset + left_trim_amount,
-                        "width": (rw_zoom - right_width_trim) - left_trim_amount,
-                        "height": rh_zoom + extra_height
+                        "top": self.offset_y,
+                        "left": self.offset_x + int(self.width * 0.5 * (1 - shift_left_ratio)),  # shift left
+                        "width": int(self.width * 0.5 * (1 - trim_right_ratio)),  # trimmed width
+                        "height": int(self.height * (1 + extra_height_ratio) * (1 - trim_bottom_ratio))
                     }
-                    # Grab screenshots
+
+                    # --- Grab screenshots ---
                     left_img = np.array(sct.grab(left_monitor))[:, :, :3]
                     right_img = np.array(sct.grab(right_monitor))[:, :, :3]
 
+                    # --- Resize for model ---
                     m32 = lambda v: ((v + 31) // 32) * 32
                     left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
                     right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
 
-                    # Run your model predictions
+                    # --- Model predictions ---
                     left_results = self.model.predict(
                         source=left_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=left_sz)
                     right_results = self.model.predict(
                         source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
 
-                    # Process results
+                    # --- Process results ---
                     left_boxes, left_scores = self.process_results(left_results)
                     right_boxes, right_scores = self.process_results(right_results)
 
@@ -574,35 +573,35 @@ class DetectionWorker(QThread):
                     print(f"Number of buys: {self.buy_count}")
                     print(f"Number of sells: {self.sell_count}")
 
+                    # --- Draw & emit ---
                     left_img = self.draw_coords_only(left_img, merged_left)
                     right_img = self.draw_coords_only(right_img, merged_right)
-
                     self.update_left.emit(left_img, merged_left)
                     self.update_right.emit(right_img, merged_right)
 
+                    # --- Frame stats ---
                     self.frame_count += 1
                     frame_processing_time = time.time() - start_time
-                    print(f"\nFrame {self.frame_count} processed in {frame_processing_time:.2f} sec.")
-
                     total_processing_time += frame_processing_time
                     avg_processing_time = total_processing_time / self.frame_count
 
+                    print(f"\nFrame {self.frame_count} processed in {frame_processing_time:.2f} sec.")
                     time.sleep(0.001)
 
+                    # --- Key press to stop ---
                     if key_pressed():
-                        #unix (macOS)
                         if os.name == "posix":
                             key = sys.stdin.readline().strip().lower()
-                        #windows
                         else:
                             key = msvcrt.getch().decode('utf-8').lower()
-
                         if key == 'q':
-                            print("\nQ PRESSED...STOPPING PROGRAM...")
-                            print(f"Number of frames processed: {self.frame_count} frames")
-                            print(f"Runtime : {total_processing_time:.2f} seconds")
-                            print(f"Average runtime per frame: {avg_processing_time:.2f} seconds")
                             self.running = False
+                            print("\nQ PRESSED...STOPPING PROGRAM...")
+                            minutes, seconds = divmod(total_processing_time, 60)
+                            print(f"Runtime: {int(minutes)} min {seconds:.2f} sec")
+                            print(f"Average runtime per frame: {avg_processing_time:.2f} seconds")
+                            print(f"Final number of buys: {self.buy_count}")
+                            print(f"Final number of sells: {self.sell_count}")
                             break
 
             except KeyboardInterrupt:
@@ -712,13 +711,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
