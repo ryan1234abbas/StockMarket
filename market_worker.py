@@ -527,7 +527,11 @@ class DetectionWorker(QThread):
                     # --- Define dynamic monitor regions ---
                     trim_right_ratio = 0.30   
                     trim_bottom_ratio = 0.47
-                    extra_height_ratio = 0.0  
+                    if platform.system() == "Windows":
+                        extra_height_ratio = 0.6  
+                    else:
+                        extra_height_ratio = 0  
+
                     shift_left_ratio = 0.2 
 
 
@@ -715,13 +719,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
