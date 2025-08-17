@@ -518,8 +518,12 @@ class DetectionWorker(QThread):
                     start_time = time.time()
 
                     # --- Detect app window dynamically ---
-                    self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("QuickTime Player")
+                    if platform.system() == "Darwin":
+                        self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("QuickTime Player")
+                    else:
+                        self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("Media Player")
 
+                    
                     # --- Define dynamic monitor regions ---
                     trim_right_ratio = 0.30   
                     trim_bottom_ratio = 0.47
