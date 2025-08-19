@@ -81,7 +81,10 @@ class DetectionWorker(QThread):
                 if not template_files:
                     raise FileNotFoundError(f"No template images found in templates_windows/{lbl}/")
                 self.templates[lbl] = [cv2.imread(t, cv2.IMREAD_GRAYSCALE) for t in template_files]
-                    
+
+    '''
+    Assess TM2 on video and decide
+    '''                
     def _scan_side(
         self,
         img: np.ndarray,
@@ -164,12 +167,17 @@ class DetectionWorker(QThread):
             return (None, None), ([], None), debug_img  # empty list instead of single label
 
         # Pick rightmost box but stabilize if previous exists
+        # Always default to the actual rightmost box
+        rightmost_box = max(boxes, key=lambda b: b[0])
+
+        # Try to stabilize with previous box, if available
         if hasattr(self, 'prev_candle_box') and self.prev_candle_box is not None:
-            prev_x0, prev_y0, prev_x1, prev_y1 = self.prev_candle_box
-            # choose box closest to previous x0
-            rightmost_box = min(boxes, key=lambda b: abs(b[0] - prev_x0))
-        else:
-            rightmost_box = max(boxes, key=lambda b: b[0])
+            prev_x0 = self.prev_candle_box[0]
+            candidate_box = min(boxes, key=lambda b: abs(b[0] - prev_x0))
+
+            # Only override if the candidate is reasonably close to previous
+            if abs(candidate_box[0] - prev_x0) < 50:
+                rightmost_box = candidate_box
 
         x0, y0, x1, y1 = rightmost_box
 
@@ -232,7 +240,7 @@ class DetectionWorker(QThread):
                     abs_x1 = abs_x0 + tmpl_w
                     abs_y1 = abs_y0 + tmpl_h
 
-                    matches.append((label, (abs_x0, abs_y0, abs_x1, abs_y1)))
+                    matches.append((label, (abs_x0, abs_y0, abs_x1, abs_y1), max_conf))
 
                     #print(f"{label_side}: matched {label} with confidence {max_conf:.2f}")
 
@@ -253,7 +261,7 @@ class DetectionWorker(QThread):
                 return None
             rightmost_x1 = max(lb[1][2] for lb in labels)
             candidates = [lb for lb in labels if lb[1][2] == rightmost_x1]
-            return candidates[0][0]
+            return candidates[0]
 
         def is_label_latest_by_coords(labels_with_boxes, desired_label):
             return get_rightmost_label(labels_with_boxes) == desired_label
@@ -338,16 +346,16 @@ class DetectionWorker(QThread):
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
         #template matching 1 debug
-        print(f"3020 Label: {rightmost_lbl_3020}")
-        print(f"1510 Label: {rightmost_lbl_1510}")
-        
-        # from label_analyzer import main
-        # tm2_1510 = main("dummy/bluebox_1510.png")
-        # tm1_3020 = main("dummy/bluebox_3020.png")
+        print(f"3020 Label: {rightmost_lbl_3020[0]} (Conf: {rightmost_lbl_3020[2]:.2f})")
+        print(f"1510 Label: {rightmost_lbl_1510[0]} (Conf: {rightmost_lbl_1510[2]:.2f})")
 
-        # #template matching 2 debug
-        # print(f"3020 Label [TM2]: {tm2_1510}")
-        # print(f"1510 Label [TM2]: {tm1_3020}")
+        from label_analyzer import main
+        tm2_1510, conf1510 = main("dummy/bluebox_1510.png")
+        tm1_3020, conf3020 = main("dummy/bluebox_3020.png")
+
+        #template matching 2 debug
+        print(f"3020 Label [TM2]: {tm1_3020}, Conf: {conf3020:.2f}")
+        print(f"1510 Label [TM2]: {tm2_1510}, Conf: {conf1510:.2f}")
 
         # Trading logic 
         if is_label_latest_by_coords(labels_3020, "HH") and is_label_latest_by_coords(labels_1510, "HL"):
@@ -733,13 +741,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 

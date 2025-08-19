@@ -30,10 +30,12 @@ def load_templates():
 
 def get_rightmost_label(img, templates, threshold=0.8):
     """
-    Returns the rightmost label found in the image based on the largest x-coordinate.
+    Returns the rightmost label found in the image based on the largest x-coordinate,
+    along with the confidence score.
     """
     max_x = -1
     rightmost_label = None
+    rightmost_conf = 0.0  # Keep track of the confidence of the chosen label
 
     for label, temp_imgs in templates.items():
         for template in temp_imgs:
@@ -46,7 +48,10 @@ def get_rightmost_label(img, templates, threshold=0.8):
                 if x > max_x:
                     max_x = x
                     rightmost_label = label
-    return rightmost_label
+                    rightmost_conf = max_val  # save the confidence
+
+    return rightmost_label, rightmost_conf
+
 
 def main(screenshot_path):
     img = cv2.imread(screenshot_path)
@@ -55,5 +60,5 @@ def main(screenshot_path):
         exit(1)
 
     templates = load_templates()
-    label = get_rightmost_label(img, templates)
-    return label
+    label, confidence = get_rightmost_label(img, templates)
+    return label, confidence
