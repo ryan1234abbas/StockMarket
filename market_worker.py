@@ -208,6 +208,8 @@ class DetectionWorker(QThread):
 
         if patch.size > 0:
             gray_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+            os.makedirs("dummy", exist_ok=True)
+            cv2.imwrite(f"dummy/bluebox_{label_side}.png", patch)
 
             for label in want_labels:
                 max_conf = 0
@@ -335,11 +337,19 @@ class DetectionWorker(QThread):
         rightmost_lbl_1510 = get_rightmost_label(labels_1510)
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
-        # --- Debug prints ---
-        print(f"[DEBUG] Rightmost label 3020: {rightmost_lbl_3020}")
-        print(f"[DEBUG] Rightmost label 1510: {rightmost_lbl_1510}")
+        #template matching 1 debug
+        print(f"3020 Label: {rightmost_lbl_3020}")
+        print(f"1510 Label: {rightmost_lbl_1510}")
+        
+        # from label_analyzer import main
+        # tm2_1510 = main("dummy/bluebox_1510.png")
+        # tm1_3020 = main("dummy/bluebox_3020.png")
 
-        # --- Trading logic ---
+        # #template matching 2 debug
+        # print(f"3020 Label [TM2]: {tm2_1510}")
+        # print(f"1510 Label [TM2]: {tm1_3020}")
+
+        # Trading logic 
         if is_label_latest_by_coords(labels_3020, "HH") and is_label_latest_by_coords(labels_1510, "HL"):
             if (current_signal != getattr(self, 'prev_trade_signal', None)):
                 self.last_trade_time = now
