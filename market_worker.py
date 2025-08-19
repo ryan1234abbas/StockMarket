@@ -456,17 +456,32 @@ class DetectionWorker(QThread):
 
         # --- Key press detection ---
         if os.name == "posix":
-            import select
+            import sys, select, tty, termios
+
+            # Save original terminal settings
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            tty.setcbreak(fd)  # non-canonical mode
+
             def key_pressed():
-                return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
-            try:
-                sys.stdin = open('/dev/tty')  # Ensure terminal input on Unix
-            except Exception as e:
-                print(f"Warning: could not open /dev/tty: {e}")
+                dr, _, _ = select.select([sys.stdin], [], [], 0)
+                return dr != []
+
+            def get_key():
+                if key_pressed():
+                    return sys.stdin.read(1).lower()
+                return None
+
+            import atexit
+            # Restore terminal settings on exit
+            atexit.register(lambda: termios.tcsetattr(fd, termios.TCSADRAIN, old_settings))
         else:
             import msvcrt
-            def key_pressed():
-                return msvcrt.kbhit()
+            def get_key():
+                if msvcrt.kbhit():
+                    return msvcrt.getch().decode("utf-8").lower()
+                return None
+
 
         total_processing_time = 0
 
@@ -590,20 +605,16 @@ class DetectionWorker(QThread):
                     time.sleep(0.001)
 
                     # --- Key press to stop ---
-                    if key_pressed():
-                        if os.name == "posix":
-                            key = sys.stdin.readline().strip().lower()
-                        else:
-                            key = msvcrt.getch().decode('utf-8').lower()
-                        if key == 'q':
-                            self.running = False
-                            print("\nQ PRESSED...STOPPING PROGRAM...")
-                            minutes, seconds = divmod(total_processing_time, 60)
-                            print(f"Runtime: {int(minutes)} min {seconds:.2f} sec")
-                            print(f"Average runtime per frame: {avg_processing_time:.2f} seconds")
-                            print(f"Final number of buys: {self.buy_count}")
-                            print(f"Final number of sells: {self.sell_count}")
-                            break
+                    key = get_key()  # works for both Windows and macOS
+                    if key == 'q':
+                        self.running = False
+                        print("\nQ PRESSED...STOPPING PROGRAM...")
+                        minutes, seconds = divmod(total_processing_time, 60)
+                        print(f"Runtime: {int(minutes)} min {seconds:.2f} sec")
+                        print(f"Average runtime per frame: {avg_processing_time:.2f} seconds")
+                        print(f"Final number of buys: {self.buy_count}")
+                        print(f"Final number of sells: {self.sell_count}")
+                        break
 
             except KeyboardInterrupt:
                 print("KeyboardInterrupt caught, exiting...")
@@ -712,13 +723,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
