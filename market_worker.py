@@ -7,15 +7,9 @@ from ultralytics import YOLO
 from replica_screen import ReplicaScreen
 import mss
 import cv2
-import pytesseract
-import re
 import os
 import pyautogui
 import glob
-from collections import deque
-from collections import OrderedDict
-import signal
-import select
 import platform
 import threading
 
@@ -718,13 +712,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
@@ -733,7 +727,7 @@ class MarketWorker:
         self.width = 700
         self.height = 410
 
-        self.total_frames = 20 * 60 * 1  # 20 minutes at 1 fps
+        self.total_frames = 20 * 60 * 1  
         
         '''
         Uncomment lines below to observe candle detection
