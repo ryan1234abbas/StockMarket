@@ -281,7 +281,7 @@ class DetectionWorker(QThread):
                 right_img, merged_right, ("HH", "LL", "HL", "LH"), right_img.copy(), "1510", threshold)
             right_result.update({'labels': labels, 'box': box, 'debug': debug})
 
-        # --- START THREADS ---
+        # threads
         t_left = threading.Thread(target=scan_left)
         t_right = threading.Thread(target=scan_right)
         t_left.start()
