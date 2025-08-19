@@ -522,8 +522,7 @@ class DetectionWorker(QThread):
                         self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("QuickTime Player")
                     else:
                         self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("Media Player")
-
-                    
+                                 
                     # --- Define dynamic monitor regions ---
                     trim_right_ratio = 0.30   
                     trim_bottom_ratio = 0.47
