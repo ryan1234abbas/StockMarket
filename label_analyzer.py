@@ -1,64 +1,111 @@
-import cv2
 import os
+import cv2
 import numpy as np
-import platform
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
+from tensorflow.keras.utils import to_categorical
 
-def load_templates():
+
+IMG_SIZE = 32
+LABELS = ["HH", "HL", "LH", "LL"]
+DATASET_DIR = "dataset"  
+MODEL_PATH = "label_cnn.h5"
+
+
+def load_multi_source_dataset(folders):
     """
-    Load all template images from subfolders in 'templates/'.
-    Returns a dict: {label: [list of images]}
+    folders: list of base folders (e.g., ["templates", "templates_windows"])
+    Returns: X, y for training
     """
-    
-    if platform.system() == "Darwin":
-        base_dir = "templates"
-    elif platform.system() == "Windows":
-        base_dir = "templates_windows"
-    else:
-        return "Unknown OS"
-    
-    templates = {}
-    for label in os.listdir(base_dir):
-        label_dir = os.path.join(base_dir, label)
-        if os.path.isdir(label_dir):
-            templates[label] = []
+    X, y = [], []
+
+    for base_dir in folders:
+        for idx, label in enumerate(LABELS):
+            label_dir = os.path.join(base_dir, label)
+            if not os.path.exists(label_dir):
+                continue
             for file in os.listdir(label_dir):
                 path = os.path.join(label_dir, file)
-                img = cv2.imread(path)
-                if img is not None:
-                    templates[label].append(img)
-    return templates
+                img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    continue
+                img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+                img = img / 255.0
+                X.append(img.reshape(IMG_SIZE, IMG_SIZE, 1))
+                y.append(idx)
 
-def get_rightmost_label(img, templates, threshold=0.8):
-    """
-    Returns the rightmost label found in the image based on the largest x-coordinate,
-    along with the confidence score.
-    """
-    max_x = -1
-    rightmost_label = None
-    rightmost_conf = 0.0  # Keep track of the confidence of the chosen label
+    X = np.array(X)
+    y = to_categorical(y, num_classes=len(LABELS))
+    return X, y
 
-    for label, temp_imgs in templates.items():
-        for template in temp_imgs:
-            if template.shape[0] > img.shape[0] or template.shape[1] > img.shape[1]:
-                continue  # skip templates bigger than image
-            res = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
-            if max_val >= threshold:
-                x = max_loc[0] + template.shape[1]  # right edge
-                if x > max_x:
-                    max_x = x
-                    rightmost_label = label
-                    rightmost_conf = max_val  # save the confidence
+# Build model
+def build_model():
+    model = Sequential([
+        Conv2D(16, (3,3), activation='relu', input_shape=(IMG_SIZE, IMG_SIZE,1)),
+        MaxPooling2D((2,2)),
+        Conv2D(32, (3,3), activation='relu'),
+        MaxPooling2D((2,2)),
+        Flatten(),
+        Dense(64, activation='relu'),
+        Dense(len(LABELS), activation='softmax')
+    ])
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
 
-    return rightmost_label, rightmost_conf
+# Train model
+
+def train_model():
+    folders = ["templates", "templates_windows"]  
+    print("Loading dataset from multiple sources...")
+    X, y = load_multi_source_dataset(folders)
+    print(f"Dataset loaded: {len(X)} samples")
+
+    model = build_model()
+    print("Training model...")
+    model.fit(X, y, epochs=15, batch_size=16, validation_split=0.2)
+    model.save(MODEL_PATH)
+    print(f"Model saved to {MODEL_PATH}")
+    return model
 
 
-def main(screenshot_path):
-    img = cv2.imread(screenshot_path)
+# Test model
+def test_model(image_path):
+    if not os.path.exists(MODEL_PATH):
+        print("No trained model found, training first...")
+        model = train_model()
+    else:
+        model = load_model(MODEL_PATH)
+
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
-        print("Error: image not found")
-        exit(1)
+        print("Image not found:", image_path)
+        return
 
-    templates = load_templates()
-    label, confidence = get_rightmost_label(img, templates)
-    return label, confidence
+    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE)) / 255.0
+    img = img.reshape(1, IMG_SIZE, IMG_SIZE, 1)
+
+    preds = model.predict(img, verbose=0)[0]
+    label_idx = np.argmax(preds)
+    conf = preds[label_idx]
+    print(f"Predicted label: {LABELS[label_idx]}, Confidence: {conf:.2f}")
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train and test label CNN")
+    parser.add_argument("--train", action="store_true", help="Train the CNN model")
+    parser.add_argument("--test", type=str, help="Test a single image")
+
+    args = parser.parse_args()
+
+    if args.train:
+        train_model()
+    if args.test:
+        test_model(args.test)
+
+'''
+Take a bunch of label screenshots on windows 
+and retrain on macos
+
+Then assess performance alongside TM and decide
+'''
