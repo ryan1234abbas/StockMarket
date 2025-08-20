@@ -18,15 +18,18 @@ elif platform.system() == 'Windows':
     try:
         import pygetwindow as gw
 
-        windows = gw.getWindowsWithTitle('Media Player')
+        windows = gw.getWindowsWithTitle('TradingApp')
+        if not windows:
+            windows = gw.getWindowsWithTitle('Media Player')
+        
 
         if windows:
             win = windows[0]
             win.moveTo(0, 0)
             win.resizeTo(1600, 1000)
-            print("Media Player window repositioned.")
+            print("Trading App window repositioned.")
         else:
-            print("Media Player window not found.")
+            print("Trading App window not found.")
     except ImportError:
         print("pygetwindow not installed. Run 'pip install pygetwindow'")
     except Exception as e:
