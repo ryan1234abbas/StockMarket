@@ -57,7 +57,7 @@ class DetectionWorker(QThread):
         if platform.system() == "Darwin":
             self.trade_cooldown = 6.5 
         elif platform.system() == "Windows":
-            self.trade_cooldown = 6.5
+            self.trade_cooldown = 7
         else:
             self.trade_cooldonwn = 6.5 
 
@@ -81,10 +81,7 @@ class DetectionWorker(QThread):
                 if not template_files:
                     raise FileNotFoundError(f"No template images found in templates_windows/{lbl}/")
                 self.templates[lbl] = [cv2.imread(t, cv2.IMREAD_GRAYSCALE) for t in template_files]
-
-    '''
-    Assess TM2 on video and decide
-    '''                
+               
     def _scan_side(
         self,
         img: np.ndarray,
@@ -240,7 +237,7 @@ class DetectionWorker(QThread):
                     abs_x1 = abs_x0 + tmpl_w
                     abs_y1 = abs_y0 + tmpl_h
 
-                    matches.append((label, (abs_x0, abs_y0, abs_x1, abs_y1), max_conf))
+                    matches.append((label, (abs_x0, abs_y0, abs_x1, abs_y1)))
 
                     #print(f"{label_side}: matched {label} with confidence {max_conf:.2f}")
 
@@ -261,7 +258,7 @@ class DetectionWorker(QThread):
                 return None
             rightmost_x1 = max(lb[1][2] for lb in labels)
             candidates = [lb for lb in labels if lb[1][2] == rightmost_x1]
-            return candidates[0]
+            return candidates[0][0]
 
         def is_label_latest_by_coords(labels_with_boxes, desired_label):
             return get_rightmost_label(labels_with_boxes) == desired_label
@@ -271,7 +268,7 @@ class DetectionWorker(QThread):
             print("Cooldown Active.")
             return None
 
-        # --- THREAD TARGETS ---
+        #   THREAD TARGETS  
         left_result = {}
         right_result = {}
 
@@ -281,7 +278,7 @@ class DetectionWorker(QThread):
             left_result.update({'labels': labels, 'box': box, 'debug': debug})
 
         def scan_right():
-            (_, _), (labels, box), debug = self.scan_rightmost_candle(
+            (_, _), (labels, box, ), debug = self.scan_rightmost_candle(
                 right_img, merged_right, ("HH", "LL", "HL", "LH"), right_img.copy(), "1510", threshold)
             right_result.update({'labels': labels, 'box': box, 'debug': debug})
 
@@ -293,11 +290,11 @@ class DetectionWorker(QThread):
         t_left.join()
         t_right.join()
 
-        # --- EXTRACT RESULTS ---
+        #   EXTRACT RESULTS  
         labels_3020, box_3020, debug_3020 = left_result['labels'], left_result['box'], left_result['debug']
         labels_1510, box_1510, debug_1510 = right_result['labels'], right_result['box'], right_result['debug']
 
-        # --- Width tracking ---
+        #   Width tracking  
         curr_width_3020 = box_width(box_3020)
         curr_width_1510 = box_width(box_1510)
 
@@ -307,7 +304,7 @@ class DetectionWorker(QThread):
         new_3020_candle = (prev_width_3020 is None) or (curr_width_3020 < prev_width_3020)
         new_1510_candle = (prev_width_1510 is None) or (curr_width_1510 < prev_width_1510)
 
-        # --- Save debug images ---
+        #   Save debug images  
         trim_amount = 100
         debug_3020 = debug_3020[trim_amount:, :] if debug_3020 is not None else None
         debug_1510 = debug_1510[trim_amount:, :] if debug_1510 is not None else None
@@ -317,15 +314,15 @@ class DetectionWorker(QThread):
         if debug_1510 is not None:
             cv2.imwrite("dummy/debug_1510.png", debug_1510)
 
-        # --- Update widths ---
+        #   Update widths  
         self.prev_width_3020 = curr_width_3020
         self.prev_width_1510 = curr_width_1510
 
-        # --- Proceed only if both boxes exist ---
+        #   Proceed only if both boxes exist  
         if not box_3020 or not box_1510:
             return None
 
-        # --- Reset stored labels if new candle box detected ---
+        #   Reset stored labels if new candle box detected  
         curr_box_dims = (box_3020[0], box_3020[1], box_3020[2], box_3020[3])
         if not hasattr(self, 'prev_box_dims') or self.prev_box_dims is None:
             self.prev_box_dims = curr_box_dims
@@ -340,25 +337,21 @@ class DetectionWorker(QThread):
                 self.prev_trade_signal = None
             self.prev_box_dims = curr_box_dims
 
-        # --- Determine current rightmost labels for debug ---
+        #   Determine current rightmost labels for debug  
         rightmost_lbl_3020 = get_rightmost_label(labels_3020)
         rightmost_lbl_1510 = get_rightmost_label(labels_1510)
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
-        #template matching 1 debug
-        print(f"3020 Label: {rightmost_lbl_3020[0]} (Conf: {rightmost_lbl_3020[2]:.2f})")
-        print(f"1510 Label: {rightmost_lbl_1510[0]} (Conf: {rightmost_lbl_1510[2]:.2f})")
+        # Debug printouts
+        print(f"3020 Label: {rightmost_lbl_3020 or 'None'}")
+        print(f"1510 Label: {rightmost_lbl_1510 or 'None'}")
 
-        from label_analyzer import main
-        tm2_1510, conf1510 = main("dummy/bluebox_1510.png")
-        tm1_3020, conf3020 = main("dummy/bluebox_3020.png")
+        #   Trading logic  
+        if (is_label_latest_by_coords(labels_3020, "HH") and
+            is_label_latest_by_coords(labels_1510, "HL") and
+            (new_3020_candle or self.prev_lbl_3020 != "HH") and
+            (new_1510_candle or self.prev_lbl_1510 != "HL")):
 
-        #template matching 2 debug
-        print(f"3020 Label [TM2]: {tm1_3020}, Conf: {conf3020:.2f}")
-        print(f"1510 Label [TM2]: {tm2_1510}, Conf: {conf1510:.2f}")
-
-        # Trading logic 
-        if is_label_latest_by_coords(labels_3020, "HH") and is_label_latest_by_coords(labels_1510, "HL"):
             if (current_signal != getattr(self, 'prev_trade_signal', None)):
                 self.last_trade_time = now
                 print(">> BUY signal detected (HH on 3020, HL on 1510)")
@@ -372,7 +365,7 @@ class DetectionWorker(QThread):
                 if buy_btn is None:  
                     buy_btn = pyautogui.locateCenterOnScreen('buy_sell/buy.png', confidence=0.8)
                     if buy_btn:
-                        self.cached_buy_btn = buy_btn  # save it for next time
+                        self.cached_buy_btn = buy_btn
 
                 if buy_btn:
                     pyautogui.click(buy_btn)
@@ -382,7 +375,11 @@ class DetectionWorker(QThread):
             else:
                 print("Duplicate BUY signal, ignoring.")
 
-        elif is_label_latest_by_coords(labels_3020, "LL") and is_label_latest_by_coords(labels_1510, "LH"):
+        elif (is_label_latest_by_coords(labels_3020, "LL") and 
+            is_label_latest_by_coords(labels_1510, "LH") and
+            (new_3020_candle or self.prev_lbl_3020 != "LL") and
+            (new_1510_candle or self.prev_lbl_1510 != "LH")):
+
             if getattr(self, 'counter', 0) > 0:
                 if (current_signal != getattr(self, 'prev_trade_signal', None)):
                     self.last_trade_time = now
@@ -393,12 +390,11 @@ class DetectionWorker(QThread):
                     self.prev_lbl_1510 = "LH"
                     self.prev_trade_signal = current_signal
                     
-                    #click on sell market btn
                     sell_btn = self.cached_sell_btn
                     if sell_btn is None:  
                         sell_btn = pyautogui.locateCenterOnScreen('buy_sell/sell.png', confidence=0.8)
                         if sell_btn:
-                            self.cached_sell_btn = sell_btn  # save it for next time
+                            self.cached_sell_btn = sell_btn
 
                     if sell_btn:
                         pyautogui.click(sell_btn)
@@ -412,7 +408,6 @@ class DetectionWorker(QThread):
 
         print("No new candle detected or no valid trade signal.")
         return None
-
 
     def preprocess_for_ocr(patch):
         # Convert to grayscale
@@ -451,28 +446,28 @@ class DetectionWorker(QThread):
         h, w = img.shape[:2]
         x1, y1, x2, y2 = box
 
-        # --- horizontal limits 
+        # horizontal limits 
         if width is None:
             width = (x2 - x1) + 2 * pad_x
         left = max(0, x1 - pad_x)
         right = min(w, left + width)
         left = max(0, right - width) # recompute if we clipped on the right
 
-        # --- vertical limits 
+        # vertical limits 
         if side == "above":
             top = max(0, y1 - height)
             bottom = y1
         else:  # below
             top = y2
             bottom = min(h, y2 + height)
-            top = bottom - height          # recompute if we clipped at bottom
+            top = bottom - height        
 
         return img[top:bottom, left:right].copy()
 
 
     def run(self):
 
-        # --- Key press detection ---
+        #   Key press detection  
         if os.name == "posix":
             import sys, select, tty, termios
 
@@ -514,7 +509,7 @@ class DetectionWorker(QThread):
                         w = win[0]
                         return w.left, w.top, w.width, w.height
                 except Exception:
-                    return 0, 0, 800, 600  # fallback default
+                    return 0, 0, 800, 600  #fallback default
             elif system == "Darwin":
                 # macOS: use AppleScript
                 import subprocess
@@ -544,13 +539,17 @@ class DetectionWorker(QThread):
                 while self.running:
                     start_time = time.time()
 
-                    # --- Detect app window dynamically ---
+                    #  Detect app window dynamically 
                     if platform.system() == "Darwin":
                         self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("QuickTime Player")
                     else:
-                        self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("Media Player")
-                                 
-                    # --- Define dynamic monitor regions ---
+                        bounds = get_window_bounds("TradingApp")
+                        if bounds:
+                            self.offset_x, self.offset_y, self.width, self.height = bounds
+                        else:
+                            self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("Media Player")
+                            
+                    #  Define dynamic monitor regions 
                     trim_right_ratio = 0.30   
                     trim_bottom_ratio = 0.47
                     if platform.system() == "Windows":
@@ -575,22 +574,22 @@ class DetectionWorker(QThread):
                         "height": int(self.height * (1 + extra_height_ratio) * (1 - trim_bottom_ratio))
                     }
 
-                    # --- Grab screenshots ---
+                    #  Grab screenshots 
                     left_img = np.array(sct.grab(left_monitor))[:, :, :3]
                     right_img = np.array(sct.grab(right_monitor))[:, :, :3]
 
-                    # --- Resize for model ---
+                    #  Resize for model 
                     m32 = lambda v: ((v + 31) // 32) * 32
                     left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
                     right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
 
-                    # --- Model predictions ---
+                    # Model predictions 
                     left_results = self.model.predict(
                         source=left_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=left_sz)
                     right_results = self.model.predict(
                         source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
 
-                    # --- Process results ---
+                    # Process results 
                     left_boxes, left_scores = self.process_results(left_results)
                     right_boxes, right_scores = self.process_results(right_results)
 
@@ -607,22 +606,22 @@ class DetectionWorker(QThread):
                     print(f"Number of buys: {self.buy_count}")
                     print(f"Number of sells: {self.sell_count}")
 
-                    # --- Draw & emit ---
+                    # Draw & emit
                     left_img = self.draw_coords_only(left_img, merged_left)
                     right_img = self.draw_coords_only(right_img, merged_right)
                     self.update_left.emit(left_img, merged_left)
                     self.update_right.emit(right_img, merged_right)
 
-                    # --- Frame stats ---
+                    # Frame stats
                     self.frame_count += 1
                     frame_processing_time = time.time() - start_time
                     total_processing_time += frame_processing_time
                     avg_processing_time = total_processing_time / self.frame_count
 
                     print(f"\nFrame {self.frame_count} processed in {frame_processing_time:.2f} sec.")
-                    time.sleep(0.001)
+                    time.sleep(0.0001)
 
-                    # --- Key press to stop ---
+                    #stop program
                     key = get_key()  # works for both Windows and macOS
                     if key == 'q':
                         self.running = False
