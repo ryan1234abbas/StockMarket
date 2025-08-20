@@ -543,7 +543,7 @@ class DetectionWorker(QThread):
                     if platform.system() == "Darwin":
                         self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("QuickTime Player")
                     else:
-                        bounds = get_window_bounds("TradingApp")
+                        bounds = get_window_bounds("NinjaTrader")
                         if bounds:
                             self.offset_x, self.offset_y, self.width, self.height = bounds
                         else:
