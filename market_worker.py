@@ -12,6 +12,8 @@ import pyautogui
 import glob
 import platform
 import threading
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0=all, 1=info, 2=warning, 3=error
+
 
 
 if platform.system() == "Windows":
@@ -342,11 +344,11 @@ class DetectionWorker(QThread):
         rightmost_lbl_1510 = get_rightmost_label(labels_1510)
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
-        # Debug printouts
+        #debug statements
         print(f"3020 Label: {rightmost_lbl_3020 or 'None'}")
         print(f"1510 Label: {rightmost_lbl_1510 or 'None'}")
 
-        #   Trading logic  
+        #Trading logic  
         if (is_label_latest_by_coords(labels_3020, "HH") and
             is_label_latest_by_coords(labels_1510, "HL") and
             (new_3020_candle or self.prev_lbl_3020 != "HH") and
@@ -740,13 +742,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
