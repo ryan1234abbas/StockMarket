@@ -247,8 +247,7 @@ class DetectionWorker(QThread):
         return (None, None), (matches, rightmost_box), debug_img
 
 
-    def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right,
-                            templates, threshold=0.93, w_crop=130, h_crop=100):
+    def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right, templates, threshold=0.93, w_crop=130, h_crop=100):
 
         def box_width(box):
             return (box[2] - box[0]) if box else 0
@@ -268,21 +267,19 @@ class DetectionWorker(QThread):
             print("Cooldown Active.")
             return None
 
-        #   THREAD TARGETS  
-        left_result = {}
-        right_result = {}
+        left_result = {'labels': [], 'box': None, 'debug': None}
+        right_result = {'labels': [], 'box': None, 'debug': None}
 
         def scan_left():
             (_, _), (labels, box), debug = self.scan_rightmost_candle(
                 left_img, merged_left, ("HH", "LL", "HL", "LH"), left_img.copy(), "3020", threshold)
-            left_result.update({'labels': labels, 'box': box, 'debug': debug})
+            left_result.update({'labels': labels or [], 'box': box, 'debug': debug})
 
         def scan_right():
-            (_, _), (labels, box, ), debug = self.scan_rightmost_candle(
+            (_, _), (labels, box), debug = self.scan_rightmost_candle(
                 right_img, merged_right, ("HH", "LL", "HL", "LH"), right_img.copy(), "1510", threshold)
-            right_result.update({'labels': labels, 'box': box, 'debug': debug})
+            right_result.update({'labels': labels or [], 'box': box, 'debug': debug})
 
-        # threads
         t_left = threading.Thread(target=scan_left)
         t_right = threading.Thread(target=scan_right)
         t_left.start()
@@ -290,7 +287,6 @@ class DetectionWorker(QThread):
         t_left.join()
         t_right.join()
 
-        #   EXTRACT RESULTS  
         labels_3020, box_3020, debug_3020 = left_result['labels'], left_result['box'], left_result['debug']
         labels_1510, box_1510, debug_1510 = right_result['labels'], right_result['box'], right_result['debug']
 
