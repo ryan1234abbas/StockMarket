@@ -12,7 +12,7 @@ import pyautogui
 import glob
 import platform
 import threading
-import psutil
+
 
 if platform.system() == "Windows":
     import msvcrt
@@ -48,6 +48,7 @@ class DetectionWorker(QThread):
         self.prev_lbl_3020 = None
         self.prev_lbl_1510 = None
         self.first_trade_done = False
+        #balance speed with accuracy
         self.last_trade_time = 0
         self.cached_buy_btn = None
         self.cached_sell_btn = None
@@ -85,67 +86,69 @@ class DetectionWorker(QThread):
         self,
         img: np.ndarray,
         merged_boxes: list,
-        templates: dict[str, list[np.ndarray]],
-        want_labels: tuple[str, str],
+        templates: dict[str, np.ndarray],
+        want_labels: tuple[str, str],       
         debug_img: np.ndarray,
         w_crop: int = 130,
         h_crop: int = 100,
-        threshold: float = 0.6,
-        scale: float = 0.5
+        threshold: float = 0.8,
     ):
         img_h, img_w = img.shape[:2]
-        found_lbl = None
         prev_y = None
-
-        # --- Downscale and preprocess full frame once ---
-        img_small = cv2.resize(img, (0, 0), fx=scale, fy=scale)
-        gray_full = cv2.cvtColor(img_small, cv2.COLOR_BGR2GRAY)
-        gray_full = cv2.equalizeHist(gray_full)
-        edges_full = cv2.Canny(gray_full, 50, 150)
-
-        # --- Preprocess templates once ---
-        proc_templates = {}
-        for lbl in want_labels:
-            proc_templates[lbl] = []
-            for tmpl in templates[lbl]:
-                tmpl_gray = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY) if len(tmpl.shape) == 3 else tmpl
-                tmpl_gray = cv2.equalizeHist(tmpl_gray)
-                tmpl_edges = cv2.Canny(tmpl_gray, 50, 150)
-                tmpl_small = cv2.resize(tmpl_edges, (0,0), fx=scale, fy=scale)
-                proc_templates[lbl].append(tmpl_small)
+        found_lbl = None
 
         for idx, (x0, y0, x1, y1) in enumerate(sorted(merged_boxes, key=lambda b: b[0])):
+            # decide crop rectangle
             xc = (x0 + x1) // 2
             x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
             patches, boxes = [], []
 
-            # Draw debug rectangles
-            for (x1_, y1_, x2_, y2_), (pos, _) in zip(boxes, patches):
-                color = (0,255,0) if pos=='above' else (0,0,255)
+            if idx == 0:
+                y_above = max(0, y0 - h_crop)
+                y_below = min(img_h - h_crop, y1)
+                patches += [
+                    ('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]),
+                    ('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]),
+                ]
+                boxes  += [
+                    (x_left, y_above, x_left + w_crop, y_above + h_crop),
+                    (x_left, y_below, x_left + w_crop, y_below + h_crop),
+                ]
+                prev_y = y0
+            else:                                
+                if y0 < prev_y:
+                    y_above = max(0, y0 - h_crop)
+                    patches.append(('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]))
+                    boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
+                else:
+                    y_below = min(img_h - h_crop, y1)
+                    patches.append(('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]))
+                    boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
+                prev_y = y0
+
+            # draw green (above) / red (below) rectangles for debug
+            for (x1_, y1_, x2_, y2_) in boxes:
+                color = (0, 255, 0) if y1_ < y2_ and 'above' in [p[0] for p in patches] else (0, 0, 255)
                 cv2.rectangle(debug_img, (x1_, y1_), (x2_, y2_), color, 2)
 
-            # Template matching on preprocessed patches
-            for pos, (x_patch, y_patch, w_patch, h_patch) in patches:
-                # Crop from preprocessed edge image
-                x_s = int(x_patch * scale)
-                y_s = int(y_patch * scale)
-                w_s = int(w_patch * scale)
-                h_s = int(h_patch * scale)
-                patch_small = edges_full[y_s:y_s+h_s, x_s:x_s+w_s]
-
-                for lbl in want_labels:
+            # template matching
+            for pos, patch in patches:
+                patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+                for lbl in want_labels:          
                     max_val_for_label = 0
-                    for tmpl_small in proc_templates[lbl]:
-                        if patch_small.shape[0] < tmpl_small.shape[0] or patch_small.shape[1] < tmpl_small.shape[1]:
-                            continue
-                        res = cv2.matchTemplate(patch_small, tmpl_small, cv2.TM_CCOEFF_NORMED)
-                        max_val = res.max()
-                        if max_val > max_val_for_label:
-                            max_val_for_label = max_val
+                    # self.templates[lbl] is a list of templates for that label
+                    for lbl in want_labels:
+                        max_val_for_label = 0
+                        for tmpl in self.templates[lbl]:
+                            res = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
+                            max_val = res.max()
+                            if max_val > max_val_for_label:
+                                max_val_for_label = max_val
 
-                    if max_val_for_label >= threshold:
-                        found_lbl = lbl
-                        break
+                        if max_val_for_label >= threshold:
+                            label_main = lbl
+                            break
+        
                 if found_lbl:
                     break
             if found_lbl:
@@ -210,10 +213,8 @@ class DetectionWorker(QThread):
 
         if patch.size > 0:
             gray_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-            
-            '''use for debugging'''
-            # os.makedirs("dummy", exist_ok=True)
-            # cv2.imwrite(f"dummy/bluebox_{label_side}.png", patch)
+            os.makedirs("dummy", exist_ok=True)
+            cv2.imwrite(f"dummy/bluebox_{label_side}.png", patch)
 
             for label in want_labels:
                 max_conf = 0
@@ -246,7 +247,8 @@ class DetectionWorker(QThread):
         return (None, None), (matches, rightmost_box), debug_img
 
 
-    def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right, templates, threshold=0.93, w_crop=130, h_crop=100):
+    def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right,
+                            templates, threshold=0.93, w_crop=130, h_crop=100):
 
         def box_width(box):
             return (box[2] - box[0]) if box else 0
@@ -266,19 +268,21 @@ class DetectionWorker(QThread):
             print("Cooldown Active.")
             return None
 
-        left_result = {'labels': [], 'box': None, 'debug': None}
-        right_result = {'labels': [], 'box': None, 'debug': None}
+        #   THREAD TARGETS  
+        left_result = {}
+        right_result = {}
 
         def scan_left():
             (_, _), (labels, box), debug = self.scan_rightmost_candle(
                 left_img, merged_left, ("HH", "LL", "HL", "LH"), left_img.copy(), "3020", threshold)
-            left_result.update({'labels': labels or [], 'box': box, 'debug': debug})
+            left_result.update({'labels': labels, 'box': box, 'debug': debug})
 
         def scan_right():
-            (_, _), (labels, box), debug = self.scan_rightmost_candle(
+            (_, _), (labels, box, ), debug = self.scan_rightmost_candle(
                 right_img, merged_right, ("HH", "LL", "HL", "LH"), right_img.copy(), "1510", threshold)
-            right_result.update({'labels': labels or [], 'box': box, 'debug': debug})
+            right_result.update({'labels': labels, 'box': box, 'debug': debug})
 
+        # threads
         t_left = threading.Thread(target=scan_left)
         t_right = threading.Thread(target=scan_right)
         t_left.start()
@@ -286,6 +290,7 @@ class DetectionWorker(QThread):
         t_left.join()
         t_right.join()
 
+        #   EXTRACT RESULTS  
         labels_3020, box_3020, debug_3020 = left_result['labels'], left_result['box'], left_result['debug']
         labels_1510, box_1510, debug_1510 = right_result['labels'], right_result['box'], right_result['debug']
 
@@ -303,13 +308,11 @@ class DetectionWorker(QThread):
         trim_amount = 100
         debug_3020 = debug_3020[trim_amount:, :] if debug_3020 is not None else None
         debug_1510 = debug_1510[trim_amount:, :] if debug_1510 is not None else None
-       
-        '''use for debugging'''
-        # os.makedirs("dummy", exist_ok=True)
-        # if debug_3020 is not None:
-        #     cv2.imwrite("dummy/debug_3020.png", debug_3020)
-        # if debug_1510 is not None:
-        #     cv2.imwrite("dummy/debug_1510.png", debug_1510)
+        os.makedirs("dummy", exist_ok=True)
+        if debug_3020 is not None:
+            cv2.imwrite("dummy/debug_3020.png", debug_3020)
+        if debug_1510 is not None:
+            cv2.imwrite("dummy/debug_1510.png", debug_1510)
 
         #   Update widths  
         self.prev_width_3020 = curr_width_3020
@@ -339,11 +342,11 @@ class DetectionWorker(QThread):
         rightmost_lbl_1510 = get_rightmost_label(labels_1510)
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
-        #debug statements
+        # Debug printouts
         print(f"3020 Label: {rightmost_lbl_3020 or 'None'}")
         print(f"1510 Label: {rightmost_lbl_1510 or 'None'}")
 
-        #Trading logic  
+        #   Trading logic  
         if (is_label_latest_by_coords(labels_3020, "HH") and
             is_label_latest_by_coords(labels_1510, "HL") and
             (new_3020_candle or self.prev_lbl_3020 != "HH") and
@@ -616,12 +619,6 @@ class DetectionWorker(QThread):
                     avg_processing_time = total_processing_time / self.frame_count
 
                     print(f"\nFrame {self.frame_count} processed in {frame_processing_time:.2f} sec.")
-                    
-                    if self.frame_count % 10 == 0:
-                        usage = psutil.cpu_percent(interval=1)
-                        freq = psutil.cpu_freq()
-                        print(f"CPU: {usage}% | {freq.current:.0f} MHz / {freq.max:.0f} MHz")
-
                     time.sleep(0.0001)
 
                     #stop program
