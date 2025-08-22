@@ -103,34 +103,6 @@ class DetectionWorker(QThread):
             x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
             patches, boxes = [], []
 
-            if idx == 0:
-                y_above = max(0, y0 - h_crop)
-                y_below = min(img_h - h_crop, y1)
-                patches += [
-                    ('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]),
-                    ('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]),
-                ]
-                boxes  += [
-                    (x_left, y_above, x_left + w_crop, y_above + h_crop),
-                    (x_left, y_below, x_left + w_crop, y_below + h_crop),
-                ]
-                prev_y = y0
-            else:                                
-                if y0 < prev_y:
-                    y_above = max(0, y0 - h_crop)
-                    patches.append(('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]))
-                    boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
-                else:
-                    y_below = min(img_h - h_crop, y1)
-                    patches.append(('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]))
-                    boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
-                prev_y = y0
-
-            # draw green (above) / red (below) rectangles for debug
-            for (x1_, y1_, x2_, y2_) in boxes:
-                color = (0, 255, 0) if y1_ < y2_ and 'above' in [p[0] for p in patches] else (0, 0, 255)
-                cv2.rectangle(debug_img, (x1_, y1_), (x2_, y2_), color, 2)
-
             # template matching
             for pos, patch in patches:
                 patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
@@ -213,8 +185,8 @@ class DetectionWorker(QThread):
 
         if patch.size > 0:
             gray_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-            os.makedirs("dummy", exist_ok=True)
-            cv2.imwrite(f"dummy/bluebox_{label_side}.png", patch)
+            # os.makedirs("dummy", exist_ok=True)
+            # cv2.imwrite(f"dummy/bluebox_{label_side}.png", patch)
 
             for label in want_labels:
                 max_conf = 0
@@ -494,7 +466,6 @@ class DetectionWorker(QThread):
                 if msvcrt.kbhit():
                     return msvcrt.getch().decode("utf-8").lower()
                 return None
-
 
         total_processing_time = 0
 
