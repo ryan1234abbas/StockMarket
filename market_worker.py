@@ -12,9 +12,7 @@ import pyautogui
 import glob
 import platform
 import threading
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0=all, 1=info, 2=warning, 3=error
-
-
+import psutil
 
 if platform.system() == "Windows":
     import msvcrt
@@ -621,6 +619,12 @@ class DetectionWorker(QThread):
                     avg_processing_time = total_processing_time / self.frame_count
 
                     print(f"\nFrame {self.frame_count} processed in {frame_processing_time:.2f} sec.")
+                    
+                    if self.frame_count % 10 == 0:
+                        usage = psutil.cpu_percent(interval=1)
+                        freq = psutil.cpu_freq()
+                        print(f"CPU: {usage}% | {freq.current:.0f} MHz / {freq.max:.0f} MHz")
+
                     time.sleep(0.0001)
 
                     #stop program
@@ -742,13 +746,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
