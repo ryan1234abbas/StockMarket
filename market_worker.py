@@ -48,7 +48,6 @@ class DetectionWorker(QThread):
         self.prev_lbl_3020 = None
         self.prev_lbl_1510 = None
         self.first_trade_done = False
-        #balance speed with accuracy
         self.last_trade_time = 0
         self.cached_buy_btn = None
         self.cached_sell_btn = None
@@ -57,7 +56,7 @@ class DetectionWorker(QThread):
         if platform.system() == "Darwin":
             self.trade_cooldown = 6.5 
         elif platform.system() == "Windows":
-            self.trade_cooldown = 7
+            self.trade_cooldown = 8
         else:
             self.trade_cooldonwn = 6.5 
 
