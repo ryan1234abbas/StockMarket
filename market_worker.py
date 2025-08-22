@@ -119,36 +119,12 @@ class DetectionWorker(QThread):
             x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
             patches, boxes = [], []
 
-            # Determine vertical position of patch
-            if idx == 0:
-                y_above = max(0, y0 - h_crop)
-                y_below = min(img_h - h_crop, y1)
-                patches += [
-                    ('above', (x_left, y_above, w_crop, h_crop)),
-                    ('below', (x_left, y_below, w_crop, h_crop)),
-                ]
-                boxes += [
-                    (x_left, y_above, x_left + w_crop, y_above + h_crop),
-                    (x_left, y_below, x_left + w_crop, y_below + h_crop),
-                ]
-                prev_y = y0
-            else:
-                if y0 < prev_y:
-                    y_above = max(0, y0 - h_crop)
-                    patches.append(('above', (x_left, y_above, w_crop, h_crop)))
-                    boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
-                else:
-                    y_below = min(img_h - h_crop, y1)
-                    patches.append(('below', (x_left, y_below, w_crop, h_crop)))
-                    boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
-                prev_y = y0
-
             # Draw debug rectangles
             for (x1_, y1_, x2_, y2_), (pos, _) in zip(boxes, patches):
                 color = (0,255,0) if pos=='above' else (0,0,255)
                 cv2.rectangle(debug_img, (x1_, y1_), (x2_, y2_), color, 2)
 
-            # --- Template matching on preprocessed patches ---
+            # Template matching on preprocessed patches
             for pos, (x_patch, y_patch, w_patch, h_patch) in patches:
                 # Crop from preprocessed edge image
                 x_s = int(x_patch * scale)
@@ -234,8 +210,10 @@ class DetectionWorker(QThread):
 
         if patch.size > 0:
             gray_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-            os.makedirs("dummy", exist_ok=True)
-            cv2.imwrite(f"dummy/bluebox_{label_side}.png", patch)
+            
+            '''use for debugging'''
+            # os.makedirs("dummy", exist_ok=True)
+            # cv2.imwrite(f"dummy/bluebox_{label_side}.png", patch)
 
             for label in want_labels:
                 max_conf = 0
@@ -325,11 +303,13 @@ class DetectionWorker(QThread):
         trim_amount = 100
         debug_3020 = debug_3020[trim_amount:, :] if debug_3020 is not None else None
         debug_1510 = debug_1510[trim_amount:, :] if debug_1510 is not None else None
-        os.makedirs("dummy", exist_ok=True)
-        if debug_3020 is not None:
-            cv2.imwrite("dummy/debug_3020.png", debug_3020)
-        if debug_1510 is not None:
-            cv2.imwrite("dummy/debug_1510.png", debug_1510)
+       
+        '''use for debugging'''
+        # os.makedirs("dummy", exist_ok=True)
+        # if debug_3020 is not None:
+        #     cv2.imwrite("dummy/debug_3020.png", debug_3020)
+        # if debug_1510 is not None:
+        #     cv2.imwrite("dummy/debug_1510.png", debug_1510)
 
         #   Update widths  
         self.prev_width_3020 = curr_width_3020
