@@ -153,91 +153,97 @@ class DetectionWorker(QThread):
 
         return found_lbl
 
-    def scan_rightmost_candle(self, img, boxes, want_labels, debug_img, label_side, threshold=0.95, min_conf_gap=0.05):
+    def scan_rightmost_candle(self, img, boxes, want_labels, debug_img, label_side, threshold=0.93):
         img_h, img_w = img.shape[:2]
 
         if not boxes:
             print(f"{label_side}: No candles detected.")
-            return (None, None), ([], None), debug_img
+            return (None, None), ([], None), debug_img  # empty list instead of single label
 
-        # --- Pick rightmost box, optionally stabilize with previous ---
+        # Pick rightmost box but stabilize if previous exists
+        # Always default to the actual rightmost box
         rightmost_box = max(boxes, key=lambda b: b[0])
+
+        # Try to stabilize with previous box, if available
         if hasattr(self, 'prev_candle_box') and self.prev_candle_box is not None:
             prev_x0 = self.prev_candle_box[0]
             candidate_box = min(boxes, key=lambda b: abs(b[0] - prev_x0))
+
+            # Only override if the candidate is reasonably close to previous
             if abs(candidate_box[0] - prev_x0) < 50:
                 rightmost_box = candidate_box
 
         x0, y0, x1, y1 = rightmost_box
 
-        # Define scanning patch
         scan_margin = 35
         right_edge_buffer = 70
         scan_x0 = max(0, x1 - scan_margin)
         scan_x1 = img_w - right_edge_buffer
-        center_y = (y0 + y1) // 2
-        scan_y0 = max(0, center_y - 500)   # some extra height
-        scan_y1 = min(img_h, center_y + 500)
 
-        # Platform adjustments
-        if platform.system() == "Darwin":
-            scan_x1 = img_w
+        center_y = (y0 + y1) // 2
+        box_height = 5000  # or any default
+
+        scan_y0 = max(0, center_y - box_height // 2)
+        scan_y1 = min(img_h, center_y + box_height // 2)
+
+        # Now apply extra height expansion
+        extra_height = 1000
+        scan_y0 = max(0, scan_y0 - extra_height // 2)
+        scan_y1 = min(img_h, scan_y1 + extra_height // 2)
+
+        if scan_y1 - scan_y0 < 100:
+            scan_y0 = max(0, scan_y1 - 100)
+
+        if platform.system() == "Darwin":  # macOS
+            scan_x0 = max(0, x1 - scan_margin)  
+            scan_x1 = img_w 
+            
         elif platform.system() == "Windows":
             scan_x1 = img_w
             scan_x0 += 20
+            threshold = 0.93
 
-        # Draw patch
-        cv2.rectangle(debug_img, (scan_x0, scan_y0), (scan_x1, scan_y1), (255,0,0), 2)
+        cv2.rectangle(debug_img, (scan_x0, scan_y0), (scan_x1, scan_y1), (255, 0, 0), 2)
+
         patch = img[scan_y0:scan_y1, scan_x0:scan_x1]
+        matches = []  # list to hold (label, box) tuples
 
-        matches = []
         if patch.size > 0:
             gray_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+            
+            '''use for debugging'''
+            # os.makedirs("dummy", exist_ok=True)
+            # cv2.imwrite(f"dummy/bluebox_{label_side}.png", patch)
+
             for label in want_labels:
                 max_conf = 0
                 best_loc = None
                 for tmpl in self.templates[label]:
+                    # Skip template if bigger than patch
                     if gray_patch.shape[0] < tmpl.shape[0] or gray_patch.shape[1] < tmpl.shape[1]:
                         continue
                     res = cv2.matchTemplate(gray_patch, tmpl, cv2.TM_CCOEFF_NORMED)
                     _, curr_conf, _, max_loc = cv2.minMaxLoc(res)
                     if curr_conf > max_conf:
                         max_conf = curr_conf
-                        best_loc = max_loc
+                        best_loc = max_loc  # location of best match for this template
 
-                # Store match
-                matches.append((label, max_conf, best_loc, tmpl.shape if best_loc else None))
+                if max_conf >= threshold and best_loc is not None:
+                    # Calculate absolute box coordinates of detected label inside img
+                    tmpl_h, tmpl_w = self.templates[label][0].shape[:2]
+                    abs_x0 = scan_x0 + best_loc[0]
+                    abs_y0 = scan_y0 + best_loc[1]
+                    abs_x1 = abs_x0 + tmpl_w
+                    abs_y1 = abs_y0 + tmpl_h
 
-            # --- Pick best label based on confidence and gap ---
-            matches.sort(key=lambda x: x[1], reverse=True)  # highest confidence first
-            if matches:
-                best_label, best_conf, best_loc, tmpl_shape = matches[0]
-                if best_conf >= threshold:
-                    # check gap
-                    if len(matches) > 1:
-                        second_conf = matches[1][1]
-                        if best_conf - second_conf < min_conf_gap:
-                            # confidence too close, uncertain
-                            best_label = None
+                    matches.append((label, (abs_x0, abs_y0, abs_x1, abs_y1)))
 
-                    if best_label and best_loc:
-                        tmpl_h, tmpl_w = tmpl_shape
-                        abs_x0 = scan_x0 + best_loc[0]
-                        abs_y0 = scan_y0 + best_loc[1]
-                        abs_x1 = abs_x0 + tmpl_w
-                        abs_y1 = abs_y0 + tmpl_h
-                        matches_final = [(best_label, (abs_x0, abs_y0, abs_x1, abs_y1))]
-                    else:
-                        matches_final = []
-                else:
-                    matches_final = []
-            else:
-                matches_final = []
-        else:
-            matches_final = []
+                    #print(f"{label_side}: matched {label} with confidence {max_conf:.2f}")
 
         self.prev_candle_box = rightmost_box
-        return (None, None), (matches_final, rightmost_box), debug_img
+
+        # Return list of all matched labels with their boxes, plus the rightmost candle box for reference
+        return (None, None), (matches, rightmost_box), debug_img
 
 
     def analyze_candles_tm(self, left_img, merged_left, right_img, merged_right, templates, threshold=0.93, w_crop=130, h_crop=100):
