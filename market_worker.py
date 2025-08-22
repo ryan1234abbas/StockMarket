@@ -91,28 +91,27 @@ class DetectionWorker(QThread):
         debug_img: np.ndarray,
         w_crop: int = 130,
         h_crop: int = 100,
-        threshold: float = 0.6,   # lower threshold for edge-based matching
-        scale: float = 0.5        # downscale factor for speed
+        threshold: float = 0.6,
+        scale: float = 0.5
     ):
         img_h, img_w = img.shape[:2]
-        prev_y = None
         found_lbl = None
+        prev_y = None
 
-        # Pre-sharpen kernel
-        sharpen_kernel = np.array([[0,-1,0], [-1,5,-1], [0,-1,0]])
+        # --- Downscale and preprocess full frame once ---
+        img_small = cv2.resize(img, (0, 0), fx=scale, fy=scale)
+        gray_full = cv2.cvtColor(img_small, cv2.COLOR_BGR2GRAY)
+        gray_full = cv2.equalizeHist(gray_full)
+        edges_full = cv2.Canny(gray_full, 50, 150)
 
         # --- Preprocess templates once ---
         proc_templates = {}
         for lbl in want_labels:
             proc_templates[lbl] = []
             for tmpl in templates[lbl]:
-                # grayscale
                 tmpl_gray = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY) if len(tmpl.shape) == 3 else tmpl
-                # equalize
                 tmpl_gray = cv2.equalizeHist(tmpl_gray)
-                # edges
                 tmpl_edges = cv2.Canny(tmpl_gray, 50, 150)
-                # downscale
                 tmpl_small = cv2.resize(tmpl_edges, (0,0), fx=scale, fy=scale)
                 proc_templates[lbl].append(tmpl_small)
 
@@ -121,13 +120,13 @@ class DetectionWorker(QThread):
             x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
             patches, boxes = [], []
 
-            # determine vertical position of patch
+            # Determine vertical position of patch
             if idx == 0:
                 y_above = max(0, y0 - h_crop)
                 y_below = min(img_h - h_crop, y1)
                 patches += [
-                    ('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]),
-                    ('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]),
+                    ('above', (x_left, y_above, w_crop, h_crop)),
+                    ('below', (x_left, y_below, w_crop, h_crop)),
                 ]
                 boxes += [
                     (x_left, y_above, x_left + w_crop, y_above + h_crop),
@@ -137,11 +136,11 @@ class DetectionWorker(QThread):
             else:
                 if y0 < prev_y:
                     y_above = max(0, y0 - h_crop)
-                    patches.append(('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]))
+                    patches.append(('above', (x_left, y_above, w_crop, h_crop)))
                     boxes.append((x_left, y_above, x_left + w_crop, y_above + h_crop))
                 else:
                     y_below = min(img_h - h_crop, y1)
-                    patches.append(('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]))
+                    patches.append(('below', (x_left, y_below, w_crop, h_crop)))
                     boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
                 prev_y = y0
 
@@ -150,22 +149,20 @@ class DetectionWorker(QThread):
                 color = (0,255,0) if pos=='above' else (0,0,255)
                 cv2.rectangle(debug_img, (x1_, y1_), (x2_, y2_), color, 2)
 
-            # Template matching on all patches
-            for pos, patch in patches:
-                # preprocess patch
-                patch = cv2.filter2D(patch, -1, sharpen_kernel)
-                patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-                patch_gray = cv2.equalizeHist(patch_gray)
-                patch_edges = cv2.Canny(patch_gray, 50, 150)
-                patch_small = cv2.resize(patch_edges, (0,0), fx=scale, fy=scale)
+            # --- Template matching on preprocessed patches ---
+            for pos, (x_patch, y_patch, w_patch, h_patch) in patches:
+                # Crop from preprocessed edge image
+                x_s = int(x_patch * scale)
+                y_s = int(y_patch * scale)
+                w_s = int(w_patch * scale)
+                h_s = int(h_patch * scale)
+                patch_small = edges_full[y_s:y_s+h_s, x_s:x_s+w_s]
 
-                # check each label
                 for lbl in want_labels:
                     max_val_for_label = 0
                     for tmpl_small in proc_templates[lbl]:
                         if patch_small.shape[0] < tmpl_small.shape[0] or patch_small.shape[1] < tmpl_small.shape[1]:
-                            continue  # skip if template larger than patch
-
+                            continue
                         res = cv2.matchTemplate(patch_small, tmpl_small, cv2.TM_CCOEFF_NORMED)
                         max_val = res.max()
                         if max_val > max_val_for_label:
@@ -180,7 +177,6 @@ class DetectionWorker(QThread):
                 break
 
         return found_lbl
-
 
     def scan_rightmost_candle(self, img, boxes, want_labels, debug_img, label_side, threshold=0.93):
         img_h, img_w = img.shape[:2]
