@@ -91,7 +91,8 @@ class DetectionWorker(QThread):
         debug_img: np.ndarray,
         w_crop: int = 130,
         h_crop: int = 100,
-        threshold: float = 0.8,
+        threshold: float = 0.6,   # lower threshold for edge-based matching
+        scale: float = 0.5        # downscale factor for speed
     ):
         img_h, img_w = img.shape[:2]
         prev_y = None
@@ -99,6 +100,21 @@ class DetectionWorker(QThread):
 
         # Pre-sharpen kernel
         sharpen_kernel = np.array([[0,-1,0], [-1,5,-1], [0,-1,0]])
+
+        # --- Preprocess templates once ---
+        proc_templates = {}
+        for lbl in want_labels:
+            proc_templates[lbl] = []
+            for tmpl in templates[lbl]:
+                # grayscale
+                tmpl_gray = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY) if len(tmpl.shape) == 3 else tmpl
+                # equalize
+                tmpl_gray = cv2.equalizeHist(tmpl_gray)
+                # edges
+                tmpl_edges = cv2.Canny(tmpl_gray, 50, 150)
+                # downscale
+                tmpl_small = cv2.resize(tmpl_edges, (0,0), fx=scale, fy=scale)
+                proc_templates[lbl].append(tmpl_small)
 
         for idx, (x0, y0, x1, y1) in enumerate(sorted(merged_boxes, key=lambda b: b[0])):
             xc = (x0 + x1) // 2
@@ -136,27 +152,24 @@ class DetectionWorker(QThread):
 
             # Template matching on all patches
             for pos, patch in patches:
-                # sharpen
+                # preprocess patch
                 patch = cv2.filter2D(patch, -1, sharpen_kernel)
-                # increase contrast
-                lab = cv2.cvtColor(patch, cv2.COLOR_BGR2LAB)
-                l, a, b = cv2.split(lab)
-                l = cv2.equalizeHist(l)
-                patch = cv2.merge((l,a,b))
                 patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+                patch_gray = cv2.equalizeHist(patch_gray)
+                patch_edges = cv2.Canny(patch_gray, 50, 150)
+                patch_small = cv2.resize(patch_edges, (0,0), fx=scale, fy=scale)
 
                 # check each label
                 for lbl in want_labels:
                     max_val_for_label = 0
-                    for tmpl in templates[lbl]:
-                        tmpl_gray = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY) if len(tmpl.shape)==3 else tmpl
-                        res = cv2.matchTemplate(patch_gray, tmpl_gray, cv2.TM_CCOEFF_NORMED)
+                    for tmpl_small in proc_templates[lbl]:
+                        if patch_small.shape[0] < tmpl_small.shape[0] or patch_small.shape[1] < tmpl_small.shape[1]:
+                            continue  # skip if template larger than patch
+
+                        res = cv2.matchTemplate(patch_small, tmpl_small, cv2.TM_CCOEFF_NORMED)
                         max_val = res.max()
                         if max_val > max_val_for_label:
                             max_val_for_label = max_val
-
-                    # Debug: print match score
-                    # print(f"Patch {pos}, label {lbl}, max_val={max_val_for_label:.3f}")
 
                     if max_val_for_label >= threshold:
                         found_lbl = lbl
@@ -167,6 +180,7 @@ class DetectionWorker(QThread):
                 break
 
         return found_lbl
+
 
     def scan_rightmost_candle(self, img, boxes, want_labels, debug_img, label_side, threshold=0.93):
         img_h, img_w = img.shape[:2]
