@@ -86,8 +86,8 @@ class DetectionWorker(QThread):
         self,
         img: np.ndarray,
         merged_boxes: list,
-        templates: dict[str, np.ndarray],
-        want_labels: tuple[str, str],       
+        templates: dict[str, list[np.ndarray]],
+        want_labels: tuple[str, str],
         debug_img: np.ndarray,
         w_crop: int = 130,
         h_crop: int = 100,
@@ -97,12 +97,15 @@ class DetectionWorker(QThread):
         prev_y = None
         found_lbl = None
 
+        # Pre-sharpen kernel
+        sharpen_kernel = np.array([[0,-1,0], [-1,5,-1], [0,-1,0]])
+
         for idx, (x0, y0, x1, y1) in enumerate(sorted(merged_boxes, key=lambda b: b[0])):
-            # decide crop rectangle
             xc = (x0 + x1) // 2
             x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
             patches, boxes = [], []
 
+            # determine vertical position of patch
             if idx == 0:
                 y_above = max(0, y0 - h_crop)
                 y_below = min(img_h - h_crop, y1)
@@ -110,12 +113,12 @@ class DetectionWorker(QThread):
                     ('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]),
                     ('below', img[y_below:y_below + h_crop, x_left:x_left + w_crop]),
                 ]
-                boxes  += [
+                boxes += [
                     (x_left, y_above, x_left + w_crop, y_above + h_crop),
                     (x_left, y_below, x_left + w_crop, y_below + h_crop),
                 ]
                 prev_y = y0
-            else:                                
+            else:
                 if y0 < prev_y:
                     y_above = max(0, y0 - h_crop)
                     patches.append(('above', img[y_above:y_above + h_crop, x_left:x_left + w_crop]))
@@ -126,29 +129,38 @@ class DetectionWorker(QThread):
                     boxes.append((x_left, y_below, x_left + w_crop, y_below + h_crop))
                 prev_y = y0
 
-            # draw green (above) / red (below) rectangles for debug
-            for (x1_, y1_, x2_, y2_) in boxes:
-                color = (0, 255, 0) if y1_ < y2_ and 'above' in [p[0] for p in patches] else (0, 0, 255)
+            # Draw debug rectangles
+            for (x1_, y1_, x2_, y2_), (pos, _) in zip(boxes, patches):
+                color = (0,255,0) if pos=='above' else (0,0,255)
                 cv2.rectangle(debug_img, (x1_, y1_), (x2_, y2_), color, 2)
 
-            # template matching
+            # Template matching on all patches
             for pos, patch in patches:
+                # sharpen
+                patch = cv2.filter2D(patch, -1, sharpen_kernel)
+                # increase contrast
+                lab = cv2.cvtColor(patch, cv2.COLOR_BGR2LAB)
+                l, a, b = cv2.split(lab)
+                l = cv2.equalizeHist(l)
+                patch = cv2.merge((l,a,b))
                 patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-                for lbl in want_labels:          
-                    max_val_for_label = 0
-                    # self.templates[lbl] is a list of templates for that label
-                    for lbl in want_labels:
-                        max_val_for_label = 0
-                        for tmpl in self.templates[lbl]:
-                            res = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
-                            max_val = res.max()
-                            if max_val > max_val_for_label:
-                                max_val_for_label = max_val
 
-                        if max_val_for_label >= threshold:
-                            label_main = lbl
-                            break
-        
+                # check each label
+                for lbl in want_labels:
+                    max_val_for_label = 0
+                    for tmpl in templates[lbl]:
+                        tmpl_gray = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY) if len(tmpl.shape)==3 else tmpl
+                        res = cv2.matchTemplate(patch_gray, tmpl_gray, cv2.TM_CCOEFF_NORMED)
+                        max_val = res.max()
+                        if max_val > max_val_for_label:
+                            max_val_for_label = max_val
+
+                    # Debug: print match score
+                    # print(f"Patch {pos}, label {lbl}, max_val={max_val_for_label:.3f}")
+
+                    if max_val_for_label >= threshold:
+                        found_lbl = lbl
+                        break
                 if found_lbl:
                     break
             if found_lbl:
@@ -742,13 +754,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
-        #self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/koshabbas/Desktop/work/stock_market/runs/detect/train_19/weights/last.pt')
         
         #Ryan's Laptop
         #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
         
         #AP's Laptop
-        self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
+        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
