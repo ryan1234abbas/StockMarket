@@ -82,51 +82,6 @@ class DetectionWorker(QThread):
                     raise FileNotFoundError(f"No template images found in templates_windows/{lbl}/")
                 self.templates[lbl] = [cv2.imread(t, cv2.IMREAD_GRAYSCALE) for t in template_files]
                
-    def _scan_side(
-        self,
-        img: np.ndarray,
-        merged_boxes: list,
-        templates: dict[str, np.ndarray],
-        want_labels: tuple[str, str],       
-        debug_img: np.ndarray,
-        w_crop: int = 130,
-        h_crop: int = 100,
-        threshold: float = 0.8,
-    ):
-        img_h, img_w = img.shape[:2]
-        prev_y = None
-        found_lbl = None
-
-        for idx, (x0, y0, x1, y1) in enumerate(sorted(merged_boxes, key=lambda b: b[0])):
-            # decide crop rectangle
-            xc = (x0 + x1) // 2
-            x_left = max(0, min(img_w - w_crop, xc - w_crop // 2))
-            patches, boxes = [], []
-
-            # template matching
-            for pos, patch in patches:
-                patch_gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-                for lbl in want_labels:          
-                    max_val_for_label = 0
-                    # self.templates[lbl] is a list of templates for that label
-                    for lbl in want_labels:
-                        max_val_for_label = 0
-                        for tmpl in self.templates[lbl]:
-                            res = cv2.matchTemplate(patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
-                            max_val = res.max()
-                            if max_val > max_val_for_label:
-                                max_val_for_label = max_val
-
-                        if max_val_for_label >= threshold:
-                            label_main = lbl
-                            break
-        
-                if found_lbl:
-                    break
-            if found_lbl:
-                break
-
-        return found_lbl
 
     def scan_rightmost_candle(self, img, boxes, want_labels, debug_img, label_side, threshold=0.93):
         img_h, img_w = img.shape[:2]
@@ -381,6 +336,7 @@ class DetectionWorker(QThread):
         print("No new candle detected or no valid trade signal.")
         return None
 
+
     def preprocess_for_ocr(patch):
         # Convert to grayscale
         gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
@@ -388,53 +344,35 @@ class DetectionWorker(QThread):
         _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         return thresh
     
-    def classify_patch(self, main_patch_gray):
+    def classify_patch(self, main_patch_gray, threshold=0.93):
+        """
+        Optimized patch classification: uses pre-grayscale templates and early exit.
+        """
         best_label = None
-        best_confidence = 0
-        threshold = 0.93  
+        best_conf = 0
 
         for lbl in self.templates:
-            for tmpl in self.templates[lbl]:
+            # Precompute grayscale templates if not done
+            if not hasattr(self, 'templates_gray'):
+                self.templates_gray = {}
+            if lbl not in self.templates_gray:
+                self.templates_gray[lbl] = [cv2.cvtColor(t, cv2.COLOR_BGR2GRAY) for t in self.templates[lbl]]
+
+            for tmpl in self.templates_gray[lbl]:
+                # Skip if template bigger than patch
+                if main_patch_gray.shape[0] < tmpl.shape[0] or main_patch_gray.shape[1] < tmpl.shape[1]:
+                    continue
+
                 res = cv2.matchTemplate(main_patch_gray, tmpl, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, _ = cv2.minMaxLoc(res)
-
-                if max_val > best_confidence and max_val >= threshold:
+                if max_val > best_conf:
+                    best_conf = max_val
                     best_label = lbl
-                    best_confidence = max_val
+                if best_conf >= threshold:
+                    return best_label, best_conf  # early exit
 
-        if best_label:
-            print(f"Matched {best_label} with confidence {best_confidence:.2f}")
+        return best_label, best_conf
 
-        return best_label, best_confidence
-
-    def crop(self,
-            img: np.ndarray,
-            box, # [x1, y1, x2, y2]
-            width: int | None = None,
-            height: int = 200,
-            pad_x: int = 10,
-            side: str = "above") -> np.ndarray:
-
-        h, w = img.shape[:2]
-        x1, y1, x2, y2 = box
-
-        # horizontal limits 
-        if width is None:
-            width = (x2 - x1) + 2 * pad_x
-        left = max(0, x1 - pad_x)
-        right = min(w, left + width)
-        left = max(0, right - width) # recompute if we clipped on the right
-
-        # vertical limits 
-        if side == "above":
-            top = max(0, y1 - height)
-            bottom = y1
-        else:  # below
-            top = y2
-            bottom = min(h, y2 + height)
-            top = bottom - height        
-
-        return img[top:bottom, left:right].copy()
 
 
     def run(self):
