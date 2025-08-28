@@ -1,7 +1,7 @@
 import os
 import platform
 
-if platform.system() == 'Darwin':  # macOS
+if platform.system() == 'Darwin':
     os.system("""
     osascript -e '
     tell application "System Events"
