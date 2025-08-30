@@ -1,7 +1,7 @@
 <annotation>
-	<folder>backup_label_imgs2</folder>
-	<filename>screenshot_300.png</filename>
-	<path>/Users/ryanabbas/Desktop/work/StockMarket/backup_label_imgs2/screenshot_300.png</path>
+	<folder>label_imgs</folder>
+	<filename>screenshot_119.png</filename>
+	<path>/Users/ryanabbas/Desktop/work/StockMarket/label_imgs/screenshot_119.png</path>
 	<source>
 		<database>Unknown</database>
 	</source>
@@ -12,15 +12,15 @@
 	</size>
 	<segmented>0</segmented>
 	<object>
-		<name>LH</name>
+		<name>HL</name>
 		<pose>Unspecified</pose>
 		<truncated>0</truncated>
 		<difficult>0</difficult>
 		<bndbox>
 			<xmin>125</xmin>
-			<ymin>281</ymin>
-			<xmax>148</xmax>
-			<ymax>296</ymax>
+			<ymin>303</ymin>
+			<xmax>146</xmax>
+			<ymax>320</ymax>
 		</bndbox>
 	</object>
 	<object>
@@ -29,22 +29,58 @@
 		<truncated>0</truncated>
 		<difficult>0</difficult>
 		<bndbox>
-			<xmin>107</xmin>
-			<ymin>568</ymin>
-			<xmax>127</xmax>
-			<ymax>586</ymax>
+			<xmin>358</xmin>
+			<ymin>431</ymin>
+			<xmax>378</xmax>
+			<ymax>449</ymax>
 		</bndbox>
 	</object>
 	<object>
-		<name>HL</name>
+		<name>LH</name>
 		<pose>Unspecified</pose>
 		<truncated>0</truncated>
 		<difficult>0</difficult>
 		<bndbox>
-			<xmin>427</xmin>
-			<ymin>390</ymin>
-			<xmax>449</xmax>
-			<ymax>408</ymax>
+			<xmin>167</xmin>
+			<ymin>78</ymin>
+			<xmax>186</xmax>
+			<ymax>92</ymax>
+		</bndbox>
+	</object>
+	<object>
+		<name>LH</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>424</xmin>
+			<ymin>189</ymin>
+			<xmax>446</xmax>
+			<ymax>202</ymax>
+		</bndbox>
+	</object>
+	<object>
+		<name>LH</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>740</xmin>
+			<ymin>403</ymin>
+			<xmax>762</xmax>
+			<ymax>423</ymax>
+		</bndbox>
+	</object>
+	<object>
+		<name>LL</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>725</xmin>
+			<ymin>602</ymin>
+			<xmax>742</xmax>
+			<ymax>617</ymax>
 		</bndbox>
 	</object>
 	<object>
@@ -53,46 +89,10 @@
 		<truncated>0</truncated>
 		<difficult>0</difficult>
 		<bndbox>
-			<xmin>573</xmin>
-			<ymin>227</ymin>
-			<xmax>598</xmax>
-			<ymax>244</ymax>
-		</bndbox>
-	</object>
-	<object>
-		<name>HL</name>
-		<pose>Unspecified</pose>
-		<truncated>0</truncated>
-		<difficult>0</difficult>
-		<bndbox>
-			<xmin>613</xmin>
-			<ymin>452</ymin>
-			<xmax>633</xmax>
-			<ymax>466</ymax>
-		</bndbox>
-	</object>
-	<object>
-		<name>HH</name>
-		<pose>Unspecified</pose>
-		<truncated>0</truncated>
-		<difficult>0</difficult>
-		<bndbox>
-			<xmin>381</xmin>
-			<ymin>67</ymin>
-			<xmax>405</xmax>
-			<ymax>82</ymax>
-		</bndbox>
-	</object>
-	<object>
-		<name>HL</name>
-		<pose>Unspecified</pose>
-		<truncated>0</truncated>
-		<difficult>0</difficult>
-		<bndbox>
-			<xmin>899</xmin>
-			<ymin>381</ymin>
-			<xmax>920</xmax>
-			<ymax>396</ymax>
+			<xmin>903</xmin>
+			<ymin>229</ymin>
+			<xmax>927</xmax>
+			<ymax>246</ymax>
 		</bndbox>
 	</object>
 </annotation>

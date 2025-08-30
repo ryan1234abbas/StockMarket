@@ -17,4 +17,4 @@ while end_time < 2400:
     screenshot.save(f"label_imgs/screenshot_{counter}.png")
     end_time = time.time() - start_time
     print(f"screenshot {counter} taken!")
-    time.sleep(0.25)
+    time.sleep(2)
