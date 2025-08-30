@@ -1,6 +1,4 @@
-#for mac laptop
 train: /content/StockMarket/images2/train
 val: /content/StockMarket/images2/val
-
 nc: 4              
 names: ['LH', 'HL', 'LL', 'HH']
