@@ -1,0 +1,6 @@
+#for mac laptop
+train: '/Users/ryanabbas/Desktop/work/StockMarket/images2/train'
+val: '/Users/ryanabbas/Desktop/work/StockMarket/images2/val'
+
+nc: 4              
+names: ['LH', 'HL', 'LL', 'HH']
