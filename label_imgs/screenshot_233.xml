@@ -48,15 +48,15 @@
 		</bndbox>
 	</object>
 	<object>
-		<name>LH</name>
+		<name>LL</name>
 		<pose>Unspecified</pose>
 		<truncated>0</truncated>
 		<difficult>0</difficult>
 		<bndbox>
-			<xmin>524</xmin>
-			<ymin>557</ymin>
+			<xmin>528</xmin>
+			<ymin>558</ymin>
 			<xmax>549</xmax>
-			<ymax>572</ymax>
+			<ymax>577</ymax>
 		</bndbox>
 	</object>
 </annotation>
