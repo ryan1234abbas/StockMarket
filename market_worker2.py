@@ -54,9 +54,9 @@ class DetectionWorker(QThread):
 
 
         if platform.system() == "Darwin":
-            self.trade_cooldown = 3 
+            self.trade_cooldown = 7 
         elif platform.system() == "Windows":
-            self.trade_cooldown = 3
+            self.trade_cooldown = 7
         else:
             self.trade_cooldonwn = 3 
 
@@ -194,7 +194,6 @@ class DetectionWorker(QThread):
                     if buy_btn:
                         self.cached_buy_btn = buy_btn
                         pyautogui.click(buy_btn)
-                    # if not found, do nothing
                 except pyautogui.ImageNotFoundException:
                     pass  # silently ignore
                 return "BUY"
@@ -217,23 +216,20 @@ class DetectionWorker(QThread):
                     if sell_btn:
                         self.cached_sell_btn = sell_btn
                         pyautogui.click(sell_btn)
-                    # if not found, do nothing
                 except pyautogui.ImageNotFoundException:
                     pass  # silently ignore
                 return "SELL"
 
+            elif self.counter == 0:
+                print("Cannot SELL before BUY.")
             else:
                 print("Duplicate SELL signal, ignoring.")
+
+        # No valid trade signal
         else:
-            print("Cannot SELL before BUY.")
+            print("No valid trade signal.")
 
-        print("No new candle detected or no valid trade signal.")
         return None
-
-
-    
- 
-
 
 
     def run(self):
@@ -496,9 +492,10 @@ class MarketWorker:
         #Ryan's IMAC
         
         #Ryan's Laptop
-        self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
+        #self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
         
         #AP's Laptop
+        self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8\weights/best.pt')
         
         self.app = QApplication.instance() or QApplication(sys.argv)
 
