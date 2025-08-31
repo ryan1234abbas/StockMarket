@@ -4,20 +4,11 @@ import numpy as np
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread, pyqtSignal
 from ultralytics import YOLO
-from replica_screen import ReplicaScreen
 import mss
 import cv2
 import os
 import pyautogui
-import glob
 import platform
-import threading
-
-
-if platform.system() == "Windows":
-    import msvcrt
-else:
-    msvcrt = None  
 
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
@@ -34,42 +25,28 @@ class DetectionWorker(QThread):
         self.total_frames = total_frames
         self.frame_count = 0
         self.running = True
-        self.prev_hhll_label   = None   # last HH or LL actually traded
-        self.prev_hllh_label = None
-        self.prev_hhll_box_id  = None   # (x0,y0,x1,y1) of that candle
-        self.prev_hl_lh_label = None
         self.prev_box_dims = None
         self.prev_trade_signal = None
         self.counter = 0 #can't sell before buying
         self.buy_count = 0 
         self.sell_count = 0
-        self.last_trade_signature = None  #avoids duplicate buying/selling in from boxes
-        self.prev_label_sig = None
         self.prev_lbl_3020 = None
         self.prev_lbl_1510 = None
-        self.first_trade_done = False
         self.last_trade_time = 0
         self.cached_buy_btn = None
         self.cached_sell_btn = None
 
 
         if platform.system() == "Darwin":
-            self.trade_cooldown = 7 
+            self.trade_cooldown = 8 
         elif platform.system() == "Windows":
-            self.trade_cooldown = 7
+            self.trade_cooldown = 8
         else:
-            self.trade_cooldonwn = 3 
+            self.trade_cooldown = 8
 
     def get_rightmost_label(self, img, boxes, labels, label_side, debug_img):
         """
         Find the rightmost detected label from YOLO detections.
-
-        Args:
-            img (np.ndarray): the image of the monitor
-            boxes (list): list of YOLO boxes [x1, y1, x2, y2]
-            labels (list): list of mapped labels corresponding to boxes
-            label_side (str): "1510" or "3020"
-            debug_img (np.ndarray): copy of the image for drawing
 
         Returns:
             tuple: (rightmost_label, rightmost_box, debug_img)
@@ -98,9 +75,6 @@ class DetectionWorker(QThread):
                         threshold=0.93):
         """
         Analyze candles using YOLO detections and determine BUY/SELL signals.
-        left_img/right_img: original images for debug
-        boxes_3020/boxes_1510: YOLO bounding boxes per monitor
-        labels_3020/labels_1510: YOLO labels per monitor
         """
 
         def get_rightmost_label(boxes, labels):
@@ -108,10 +82,6 @@ class DetectionWorker(QThread):
                 return None, None
             rightmost_idx = np.argmax([b[2] for b in boxes])
             return labels[rightmost_idx], boxes[rightmost_idx]
-
-        def is_label_latest(labels_with_boxes, desired_label):
-            lbl, _ = get_rightmost_label(*labels_with_boxes)
-            return lbl == desired_label
 
         now = time.time()
         if now - getattr(self, 'last_trade_time', 0) < getattr(self, 'trade_cooldown', 0):
@@ -132,9 +102,6 @@ class DetectionWorker(QThread):
 
         prev_width_3020 = getattr(self, 'prev_width_3020', None)
         prev_width_1510 = getattr(self, 'prev_width_1510', None)
-
-        new_3020_candle = (prev_width_3020 is None) or (curr_width_3020 < prev_width_3020)
-        new_1510_candle = (prev_width_1510 is None) or (curr_width_1510 < prev_width_1510)
 
         # Save debug images with rightmost boxes
         debug_3020 = left_img.copy()
@@ -195,7 +162,7 @@ class DetectionWorker(QThread):
                         self.cached_buy_btn = buy_btn
                         pyautogui.click(buy_btn)
                 except pyautogui.ImageNotFoundException:
-                    pass  # silently ignore
+                    pass  
                 return "BUY"
 
             else:
@@ -217,7 +184,7 @@ class DetectionWorker(QThread):
                         self.cached_sell_btn = sell_btn
                         pyautogui.click(sell_btn)
                 except pyautogui.ImageNotFoundException:
-                    pass  # silently ignore
+                    pass  
                 return "SELL"
 
             elif self.counter == 0:
@@ -234,7 +201,7 @@ class DetectionWorker(QThread):
 
     def run(self):
 
-        #   Key press detection  
+        # Key press detection  
         if os.name == "posix":
             import sys, select, tty, termios
 
@@ -290,9 +257,6 @@ class DetectionWorker(QThread):
                 end tell
                 '''
                 try:
-                    res = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
-                    # Parse res.stdout to x, y, width, height
-                    # Placeholder fallback for now:
                     return 0, 0, 1300, 1300
                 except Exception:
                     return 0, 0, 1300, 1300
@@ -497,6 +461,9 @@ class MarketWorker:
         #AP's Laptop
         self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8\weights/best.pt')
         
+        #AP's main machine
+        #self.model = YOLO()
+
         self.app = QApplication.instance() or QApplication(sys.argv)
 
         self.offset_x = 100
@@ -505,27 +472,6 @@ class MarketWorker:
         self.height = 410
 
         self.total_frames = 20 * 60 * 1  
-        
-        '''
-        Uncomment lines below to observe candle detection
-        '''
-        # self.left_replica = ReplicaScreen(
-        #     0,
-        #     400,
-        #     650,
-        #     1100,
-        #     title="3020",
-        #     trim_right=60
-        # )
-
-        # self.right_replica = ReplicaScreen(
-        #     850,
-        #     400,
-        #     450,
-        #     1100,
-        #     title="1510",
-        #     trim_right=0
-        # )
         
         self.detection_thread = DetectionWorker(
             model=self.model,
@@ -536,9 +482,6 @@ class MarketWorker:
             total_frames=self.total_frames
         )
         
-        # self.detection_thread.update_left.connect(self.left_replica.update_image_with_boxes)
-        # self.detection_thread.update_right.connect(self.right_replica.update_image_with_boxes)
-
         self.detection_thread.finished.connect(self.on_finished)
         self.detection_thread.start()
 
