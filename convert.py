@@ -3,10 +3,10 @@ import xml.etree.ElementTree as ET
 
 # Mapping your labels to YOLO IDs
 class_map = {
-    "LL": 0,
-    "HH": 1,
-    "HL": 2,
-    "LH": 3
+    "LH": 0,
+    "HL": 1,
+    "LL": 2,
+    "HH": 3
 }
 
 folder = "/Users/ryanabbas/Desktop/work/StockMarket/backup_label_imgs2"
