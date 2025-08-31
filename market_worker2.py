@@ -35,7 +35,10 @@ class DetectionWorker(QThread):
         self.last_trade_time = 0
         self.cached_buy_btn = None
         self.cached_sell_btn = None
-
+        self.buy_cooldown = 8   # seconds
+        self.sell_cooldown = 8  # seconds
+        self.last_buy_time = 0
+        self.last_sell_time = 0
 
         if platform.system() == "Darwin":
             self.trade_cooldown = 8 
@@ -146,10 +149,14 @@ class DetectionWorker(QThread):
         print(f"3020 Label: {rightmost_lbl_3020 or 'None'}")
         print(f"1510 Label: {rightmost_lbl_1510 or 'None'}")
 
+        now = time.time()
+
         # BUY logic
         if rightmost_lbl_3020 == "HH" and rightmost_lbl_1510 == "HL":
-            if current_signal != getattr(self, 'prev_trade_signal', None):
-                self.last_trade_time = now
+            if (current_signal != getattr(self, 'prev_trade_signal', None)
+                and now - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown):
+
+                self.last_buy_time = now
                 self.buy_count = getattr(self, 'buy_count', 0) + 1
                 self.counter = getattr(self, 'counter', 0) + 1
                 self.prev_lbl_3020 = "HH"
@@ -157,7 +164,9 @@ class DetectionWorker(QThread):
                 self.prev_trade_signal = current_signal
 
                 try:
-                    buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen('buy_sell/buy.png', confidence=0.8)
+                    buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
+                        'buy_sell/buy.png', confidence=0.8
+                    )
                     if buy_btn:
                         self.cached_buy_btn = buy_btn
                         pyautogui.click(buy_btn)
@@ -165,13 +174,18 @@ class DetectionWorker(QThread):
                     pass  
                 return "BUY"
 
+            elif now - getattr(self, 'last_buy_time', 0) < self.buy_cooldown:
+                print("Buy cooldown active.")
             else:
                 print("Duplicate BUY signal, ignoring.")
 
         # SELL logic
         elif rightmost_lbl_3020 == "LL" and rightmost_lbl_1510 == "LH":
-            if self.counter > 0 and current_signal != getattr(self, 'prev_trade_signal', None):
-                self.last_trade_time = now
+            if (self.counter > 0
+                and current_signal != getattr(self, 'prev_trade_signal', None)
+                and now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown):
+
+                self.last_sell_time = now
                 self.sell_count += 1
                 self.counter -= 1
                 self.prev_lbl_3020 = "LL"
@@ -179,7 +193,9 @@ class DetectionWorker(QThread):
                 self.prev_trade_signal = current_signal
 
                 try:
-                    sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen('buy_sell/sell.png', confidence=0.8)
+                    sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
+                        'buy_sell/sell.png', confidence=0.8
+                    )
                     if sell_btn:
                         self.cached_sell_btn = sell_btn
                         pyautogui.click(sell_btn)
@@ -189,6 +205,8 @@ class DetectionWorker(QThread):
 
             elif self.counter == 0:
                 print("Cannot SELL before BUY.")
+            elif now - getattr(self, 'last_sell_time', 0) < self.sell_cooldown:
+                print("Sell cooldown active.")
             else:
                 print("Duplicate SELL signal, ignoring.")
 
