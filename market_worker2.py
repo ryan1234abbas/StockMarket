@@ -27,7 +27,7 @@ class DetectionWorker(QThread):
         self.running = True
         self.prev_box_dims = None
         self.prev_trade_signal = None
-        self.counter = 0 #can't sell before buying
+        self.counter = 0 
         self.buy_count = 0 
         self.sell_count = 0
         self.prev_lbl_3020 = None
@@ -35,43 +35,13 @@ class DetectionWorker(QThread):
         self.last_trade_time = 0
         self.cached_buy_btn = None
         self.cached_sell_btn = None
-        self.buy_cooldown = 8   # seconds
-        self.sell_cooldown = 8  # seconds
         self.last_buy_time = 0
         self.last_sell_time = 0
 
-        if platform.system() == "Darwin":
-            self.trade_cooldown = 8 
-        elif platform.system() == "Windows":
-            self.trade_cooldown = 8
-        else:
-            self.trade_cooldown = 8
-
-    def get_rightmost_label(self, img, boxes, labels, label_side, debug_img):
-        """
-        Find the rightmost detected label from YOLO detections.
-
-        Returns:
-            tuple: (rightmost_label, rightmost_box, debug_img)
-        """
-
-        if not boxes:
-            print(f"{label_side}: No objects detected.")
-            return None, None, debug_img
-
-        # Pick the rightmost box
-        rightmost_idx = np.argmax([b[2] for b in boxes])  # pick the box with largest x2
-        rightmost_box = boxes[rightmost_idx]
-        rightmost_label = labels[rightmost_idx]
-
-        # Draw box on debug image
-        x0, y0, x1, y1 = rightmost_box
-        cv2.rectangle(debug_img, (x0, y0), (x1, y1), (0, 255, 0), 2)
-        cv2.putText(debug_img, rightmost_label, (x0, y0 - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-        return rightmost_label, rightmost_box, debug_img
-
+        #change based on speed of market
+        #change based on desired buy/sell frequency
+        self.buy_cooldown = 8.5   
+        self.sell_cooldown = 8.5  
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020,
                         right_img, boxes_1510, labels_1510,
@@ -79,17 +49,11 @@ class DetectionWorker(QThread):
         """
         Analyze candles using YOLO detections and determine BUY/SELL signals.
         """
-
         def get_rightmost_label(boxes, labels):
             if not boxes:
                 return None, None
-            rightmost_idx = np.argmax([b[2] for b in boxes])
-            return labels[rightmost_idx], boxes[rightmost_idx]
-
-        now = time.time()
-        if now - getattr(self, 'last_trade_time', 0) < getattr(self, 'trade_cooldown', 0):
-            print("Cooldown active.")
-            return None
+            idx = np.argmax([b[2] for b in boxes])
+            return labels[idx], boxes[idx]
 
         # Get rightmost label per monitor
         rightmost_lbl_3020, box_3020 = get_rightmost_label(boxes_3020, labels_3020)
@@ -216,7 +180,6 @@ class DetectionWorker(QThread):
 
         return None
 
-
     def run(self):
 
         # Key press detection  
@@ -307,7 +270,6 @@ class DetectionWorker(QThread):
 
                     shift_left_ratio = 0.2 
 
-
                     left_monitor = {
                         "top": self.offset_y,
                         "left": self.offset_x,
@@ -387,7 +349,6 @@ class DetectionWorker(QThread):
             finally:
                 self.finished.emit()
 
-
     def process_results(self, results):
         boxes = []
         scores = []
@@ -411,7 +372,6 @@ class DetectionWorker(QThread):
                     labels.append(result.names[int(cls)])
 
         return boxes, scores, labels
-
 
     def non_max_suppression_fast(self, boxes, scores, iou_thresh=0.4):
         if not boxes:
@@ -468,7 +428,6 @@ class DetectionWorker(QThread):
 
         return merged
 
-
 class MarketWorker:
     def __init__(self):
         #Ryan's IMAC
@@ -483,12 +442,10 @@ class MarketWorker:
         #self.model = YOLO()
 
         self.app = QApplication.instance() or QApplication(sys.argv)
-
         self.offset_x = 100
         self.offset_y = 120
         self.width = 700
         self.height = 410
-
         self.total_frames = 20 * 60 * 1  
         
         self.detection_thread = DetectionWorker(
