@@ -59,36 +59,12 @@ class DetectionWorker(QThread):
         Analyze candles using YOLO detections and determine BUY/SELL signals.
         """
 
-        def get_rightmost_label(boxes, labels, side):
+        def get_rightmost_label(boxes, labels):
             if not boxes:
                 return None, None
-
             idx = np.argmax([b[2] for b in boxes])
-            curr_label, curr_box = labels[idx], boxes[idx]
-            curr_x0 = curr_box[0]
+            return labels[idx], boxes[idx]
 
-            hist = self.histories[side]  # class-level deque
-            hist.append(curr_x0)
-
-            # Initialize a persistent flag dict if needed
-            if not hasattr(self, 'label_blocked'):
-                self.label_blocked = {'3020': False, '1510': False}
-
-            # Check for sudden drop
-            if len(hist) >= 2:
-                if (hist[-1] - hist[-2]) < -100:
-                    self.label_blocked[side] = True
-
-            # If blocked, check for recovery
-            if self.label_blocked[side]:
-                # Only unblock if it goes back up by ≥100 px from the lowest in the blocked period
-                min_blocked_x = min(list(hist)[-2:])  # last two values during block
-                if curr_x0 - min_blocked_x >= 100:
-                    self.label_blocked[side] = False
-                else:
-                    curr_label = None  # still blocked
-            
-            return curr_label, curr_box
 
         # Get rightmost label per monitor
         rightmost_lbl_3020, box_3020 = get_rightmost_label(boxes_3020, labels_3020, '3020')
@@ -176,13 +152,11 @@ class DetectionWorker(QThread):
 
         # SELL logic
         elif rightmost_lbl_3020 == "LL" and rightmost_lbl_1510 == "LH":
-            if (self.counter > 0
-                and current_signal != getattr(self, 'prev_trade_signal', None)
-                and now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown):
+            if current_signal != getattr(self, 'prev_trade_signal', None) \
+            and now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
 
                 self.last_sell_time = now
                 self.sell_count += 1
-                self.counter -= 1
                 self.prev_lbl_3020 = "LL"
                 self.prev_lbl_1510 = "LH"
                 self.prev_trade_signal = current_signal
@@ -198,8 +172,6 @@ class DetectionWorker(QThread):
                     pass  
                 return "SELL"
 
-            elif self.counter == 0:
-                print("Cannot SELL before BUY.")
             elif now - getattr(self, 'last_sell_time', 0) < self.sell_cooldown:
                 print("Sell cooldown active.")
             else:
