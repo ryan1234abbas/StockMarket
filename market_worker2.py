@@ -9,6 +9,7 @@ import cv2
 import os
 import pyautogui
 import platform
+from collections import deque
 
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
@@ -37,6 +38,14 @@ class DetectionWorker(QThread):
         self.cached_sell_btn = None
         self.last_buy_time = 0
         self.last_sell_time = 0
+        self.histories = {
+            '3020': deque(maxlen=2),
+            '1510': deque(maxlen=2)
+        }
+        self.prev_labels = {
+            '3020': {'x0': None, 'label': None},
+            '1510': {'x0': None, 'label': None}
+        }
 
         #change based on speed of market
         #change based on desired buy/sell frequency
@@ -49,15 +58,41 @@ class DetectionWorker(QThread):
         """
         Analyze candles using YOLO detections and determine BUY/SELL signals.
         """
-        def get_rightmost_label(boxes, labels):
+
+        def get_rightmost_label(boxes, labels, side):
             if not boxes:
                 return None, None
+
             idx = np.argmax([b[2] for b in boxes])
-            return labels[idx], boxes[idx]
+            curr_label, curr_box = labels[idx], boxes[idx]
+            curr_x0 = curr_box[0]
+
+            hist = self.histories[side]  # class-level deque
+            hist.append(curr_x0)
+
+            # Initialize a persistent flag dict if needed
+            if not hasattr(self, 'label_blocked'):
+                self.label_blocked = {'3020': False, '1510': False}
+
+            # Check for sudden drop
+            if len(hist) >= 2:
+                if (hist[-1] - hist[-2]) < -100:
+                    self.label_blocked[side] = True
+
+            # If blocked, check for recovery
+            if self.label_blocked[side]:
+                # Only unblock if it goes back up by ≥100 px from the lowest in the blocked period
+                min_blocked_x = min(list(hist)[-2:])  # last two values during block
+                if curr_x0 - min_blocked_x >= 100:
+                    self.label_blocked[side] = False
+                else:
+                    curr_label = None  # still blocked
+            
+            return curr_label, curr_box
 
         # Get rightmost label per monitor
-        rightmost_lbl_3020, box_3020 = get_rightmost_label(boxes_3020, labels_3020)
-        rightmost_lbl_1510, box_1510 = get_rightmost_label(boxes_1510, labels_1510)
+        rightmost_lbl_3020, box_3020 = get_rightmost_label(boxes_3020, labels_3020, '3020')
+        rightmost_lbl_1510, box_1510 = get_rightmost_label(boxes_1510, labels_1510, '1510')
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
         # Width tracking to detect new candle
@@ -103,7 +138,6 @@ class DetectionWorker(QThread):
             self.prev_trade_signal = None
         else:
             if box_3020 and curr_width_3020 < (self.prev_box_dims[2] - self.prev_box_dims[0]):
-                print("New candle box detected, resetting last labels.")
                 self.prev_lbl_3020 = None
                 self.prev_lbl_1510 = None
                 self.prev_trade_signal = None
