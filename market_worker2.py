@@ -76,7 +76,6 @@ class DetectionWorker(QThread):
             rightmost = max(filtered, key=lambda x: x[0][2])
             return rightmost[1], rightmost[0], rightmost[2]
 
-
         # Get rightmost label per monitor
         rightmost_lbl_3020, box_3020, score_3020 = get_rightmost_label(boxes_3020, labels_3020, scores_3020, min_conf=0.30)
         rightmost_lbl_1510, box_1510, score_1510 = get_rightmost_label(boxes_1510, labels_1510, scores_1510, min_conf=0.30)
@@ -133,7 +132,6 @@ class DetectionWorker(QThread):
 
         print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}")
         print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}")
-
 
         now = time.time()
 
@@ -288,7 +286,13 @@ class DetectionWorker(QThread):
 
                     shift_left_ratio = 0.2 
 
-                    #chnage this based on where trading app is (index of monitor)
+                    '''change this based on where trading app is:
+                    monitor 1 = index 0
+                    monitor 2 = index 1
+                    monitor 3 = index 2
+
+                    (right now, monitor 2 is being used)
+                    '''
                     full = np.array(sct.grab(sct.monitors[1]))[:, :, :3]
                     h,w, _ = full.shape
 
@@ -306,12 +310,14 @@ class DetectionWorker(QThread):
                         "height": h
                     }
                     
-                    trim_right = 255     
-                    trim_bottom = 80  
-                    trim_right_left_img = 150  
-                    trim_top = 30  
-                    shift_right = 40  # shift right_img 40 pixels to the left
+                    #change if needed, do not change left/right monitors
+                    right_monitor_trim = 255        # Pixels to trim from the right edge of the right monitor
+                    bottom_trim = 80                # Pixels to trim from the bottom (both monitors)
+                    left_monitor_right_trim = 150   # Pixels to trim from the right edge of the left monitor
+                    top_trim = 30                    # Pixels to trim from the top (both monitors)
+                    right_monitor_left_shift = 40   # Pixels to shift the right monitor cropping left
 
+                    #These are the sides being passed into the program (where labels are detected)
                     left_img = full[trim_top : h - trim_bottom, : (w // 2) - trim_right_left_img, :]
                     right_img = full[trim_top : h - trim_bottom, (w // 2 - shift_right) : (w - trim_right - shift_right), :]
 
@@ -319,7 +325,6 @@ class DetectionWorker(QThread):
                     m32 = lambda v: ((v + 31) // 32) * 32
                     left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
                     right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
-
 
                     # Model predictions 
                     left_results = self.model.predict(
