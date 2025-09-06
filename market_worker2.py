@@ -67,8 +67,8 @@ class DetectionWorker(QThread):
 
 
         # Get rightmost label per monitor
-        rightmost_lbl_3020, box_3020 = get_rightmost_label(boxes_3020, labels_3020, '3020')
-        rightmost_lbl_1510, box_1510 = get_rightmost_label(boxes_1510, labels_1510, '1510')
+        rightmost_lbl_3020, box_3020 = get_rightmost_label(boxes_3020, labels_3020)
+        rightmost_lbl_1510, box_1510 = get_rightmost_label(boxes_1510, labels_1510)
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
         # Width tracking to detect new candle
