@@ -11,7 +11,6 @@ import pyautogui
 import platform
 from collections import deque
 from datetime import date, datetime
-
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
     update_right = pyqtSignal(np.ndarray, list)
@@ -102,9 +101,6 @@ class DetectionWorker(QThread):
 
         curr_width_3020 = box_width(box_3020)
         curr_width_1510 = box_width(box_1510)
-
-        prev_width_3020 = getattr(self, 'prev_width_3020', None)
-        prev_width_1510 = getattr(self, 'prev_width_1510', None)
 
         # Save debug images with rightmost boxes
         debug_3020 = left_img.copy()
@@ -351,7 +347,6 @@ class DetectionWorker(QThread):
                         right_img, merged_right, merged_right_labels
                     )
 
-
                     if decision:
                         print(f"Trade decision: {decision}")
                     print(f"Number of buys: {self.buy_count}")
@@ -484,7 +479,7 @@ class MarketWorker:
         #self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
         
         #AP's Laptop
-        self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
+        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
         
         #AP's main machine
         #self.model = YOLO()
