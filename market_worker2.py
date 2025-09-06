@@ -52,23 +52,34 @@ class DetectionWorker(QThread):
         self.buy_cooldown = 8.5   
         self.sell_cooldown = 8.5  
 
-    def analyze_candles_tm(self, left_img, boxes_3020, labels_3020,
-                        right_img, boxes_1510, labels_1510,
+    def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
+                        right_img, boxes_1510, labels_1510, scores_1510,
                         threshold=0.93):
         """
         Analyze candles using YOLO detections and determine BUY/SELL signals.
         """
 
-        def get_rightmost_label(boxes, labels):
+        def get_rightmost_label(boxes, labels, scores, min_conf=0.15):
             if not boxes:
-                return None, None
-            idx = np.argmax([b[2] for b in boxes])
-            return labels[idx], boxes[idx]
+                return None, None, None
+
+            # Sort by x0 (left to right)
+            sorted_data = sorted(zip(boxes, labels, scores), key=lambda x: x[0][0])
+
+            # Filter by confidence threshold
+            filtered = [(box, label, score) for box, label, score in sorted_data if score >= min_conf]
+
+            if not filtered:
+                return None, None, None
+
+            # Rightmost = largest x1
+            rightmost = max(filtered, key=lambda x: x[0][2])
+            return rightmost[1], rightmost[0], rightmost[2]
 
 
         # Get rightmost label per monitor
-        rightmost_lbl_3020, box_3020 = get_rightmost_label(boxes_3020, labels_3020)
-        rightmost_lbl_1510, box_1510 = get_rightmost_label(boxes_1510, labels_1510)
+        rightmost_lbl_3020, box_3020, score_3020 = get_rightmost_label(boxes_3020, labels_3020, scores_3020, min_conf=0.30)
+        rightmost_lbl_1510, box_1510, score_1510 = get_rightmost_label(boxes_1510, labels_1510, scores_1510, min_conf=0.30)
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
         # Width tracking to detect new candle
@@ -116,9 +127,13 @@ class DetectionWorker(QThread):
                 self.prev_trade_signal = None
             self.prev_box_dims = curr_box_dims
 
-        # Debug prints
-        print(f"3020 Label: {rightmost_lbl_3020 or 'None'}")
-        print(f"1510 Label: {rightmost_lbl_1510 or 'None'}")
+
+        conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 is not None else "N/A"
+        conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 is not None else "N/A"
+
+        print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}")
+        print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}")
+
 
         now = time.time()
 
@@ -136,7 +151,7 @@ class DetectionWorker(QThread):
 
                 try:
                     buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
-                        'buy_sell/buy.png', confidence=0.8
+                        'buy_sell/buy2.png', confidence=0.8
                     )
                     if buy_btn:
                         self.cached_buy_btn = buy_btn
@@ -163,7 +178,7 @@ class DetectionWorker(QThread):
 
                 try:
                     sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
-                        'buy_sell/sell.png', confidence=0.8
+                        'buy_sell/sell2.png', confidence=0.8
                     )
                     if sell_btn:
                         self.cached_sell_btn = sell_btn
@@ -273,28 +288,38 @@ class DetectionWorker(QThread):
 
                     shift_left_ratio = 0.2 
 
+                    #chnage this based on where trading app is (index of monitor)
+                    full = np.array(sct.grab(sct.monitors[1]))[:, :, :3]
+                    h,w, _ = full.shape
+
                     left_monitor = {
-                        "top": self.offset_y,
-                        "left": self.offset_x,
-                        "width": int(self.width * 0.5 * (1 - trim_right_ratio)),
-                        "height": int(self.height * (1 + extra_height_ratio) * (1 - trim_bottom_ratio))
+                        "top": 0,
+                        "left": 0,
+                        "width": w//2,
+                        "height": h
                     }
 
                     right_monitor = {
-                        "top": self.offset_y,
-                        "left": self.offset_x + int(self.width * 0.5 * (1 - shift_left_ratio)),  # shift left
-                        "width": int(self.width * 0.5 * (1 - trim_right_ratio)),  # trimmed width
-                        "height": int(self.height * (1 + extra_height_ratio) * (1 - trim_bottom_ratio))
+                        "top": 0,
+                        "left": 0,
+                        "width": w//2,
+                        "height": h
                     }
+                    
+                    trim_right = 255     
+                    trim_bottom = 80  
+                    trim_right_left_img = 150  
+                    trim_top = 30  
+                    shift_right = 40  # shift right_img 40 pixels to the left
 
-                    #  Grab screenshots 
-                    left_img = np.array(sct.grab(left_monitor))[:, :, :3]
-                    right_img = np.array(sct.grab(right_monitor))[:, :, :3]
+                    left_img = full[trim_top : h - trim_bottom, : (w // 2) - trim_right_left_img, :]
+                    right_img = full[trim_top : h - trim_bottom, (w // 2 - shift_right) : (w - trim_right - shift_right), :]
 
                     #  Resize for model 
                     m32 = lambda v: ((v + 31) // 32) * 32
                     left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
                     right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
+
 
                     # Model predictions 
                     left_results = self.model.predict(
@@ -303,8 +328,8 @@ class DetectionWorker(QThread):
                         source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
 
                     # Process results 
-                    left_boxes, left_scores, left_labels = self.process_results(left_results)
-                    right_boxes, right_scores, right_labels = self.process_results(right_results)
+                    left_boxes, left_scores, left_labels, left_conf = self.process_results(left_results)
+                    right_boxes, right_scores, right_labels, right_conf = self.process_results(right_results)
 
                     keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
                     merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
@@ -315,8 +340,8 @@ class DetectionWorker(QThread):
                     merged_right_labels = [right_labels[i] for i in keep_right]
 
                     decision = self.analyze_candles_tm(
-                        left_img, merged_left, merged_left_labels,
-                        right_img, merged_right, merged_right_labels
+                        left_img, merged_left, merged_left_labels,left_conf,
+                        right_img, merged_right, merged_right_labels, right_conf
                     )
 
                     if decision:
@@ -382,11 +407,12 @@ class DetectionWorker(QThread):
 
                 if x2 > x1 and y2 > y1:
                     boxes.append([x1, y1, x2, y2])
-                    scores.append(box.conf[0].item())
+                    conf = box.conf[0].item()
+                    scores.append(conf)
                     # Convert class index to label string
                     labels.append(result.names[int(cls)])
 
-        return boxes, scores, labels
+        return boxes, scores, labels, scores
 
     def non_max_suppression_fast(self, boxes, scores, iou_thresh=0.4):
         if not boxes:
