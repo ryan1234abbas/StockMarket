@@ -1,0 +1,6 @@
+
+Time: 20:28  Date: 2025-09-05
+Runtime: 20 min 2.14 sec
+Average runtime per frame: 0.39 seconds
+Final number of buys: 13
+Final number of sells: 9

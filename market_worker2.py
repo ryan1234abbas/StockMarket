@@ -10,6 +10,7 @@ import os
 import pyautogui
 import platform
 from collections import deque
+from datetime import date, datetime
 
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
@@ -372,10 +373,23 @@ class DetectionWorker(QThread):
                         self.running = False
                         print("\nQ PRESSED...STOPPING PROGRAM...")
                         minutes, seconds = divmod(total_processing_time, 60)
-                        print(f"Runtime: {int(minutes)} min {seconds:.2f} sec")
-                        print(f"Average runtime per frame: {avg_processing_time:.2f} seconds")
-                        print(f"Final number of buys: {self.buy_count}")
-                        print(f"Final number of sells: {self.sell_count}")
+
+                        current_time = datetime.now().strftime('%H:%M')
+                        current_date = str(date.today())
+
+                        # Format log content
+                        log_content = (
+                            f"\nTime: {current_time}  Date: {current_date}\n"
+                            f"Runtime: {int(minutes)} min {seconds:.2f} sec\n"
+                            f"Average runtime per frame: {avg_processing_time:.2f} seconds\n"
+                            f"Final number of buys: {self.buy_count}\n"
+                            f"Final number of sells: {self.sell_count}\n"
+                        )
+
+                        print(log_content)
+
+                        with open("log.txt", "a") as log_file:  # Use "w" instead of "a" to overwrite each time
+                            log_file.write(log_content)
                         break
 
             except KeyboardInterrupt:
@@ -470,7 +484,7 @@ class MarketWorker:
         #self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
         
         #AP's Laptop
-        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
+        self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
         
         #AP's main machine
         #self.model = YOLO()
