@@ -288,8 +288,8 @@ class DetectionWorker(QThread):
                         bounds = get_window_bounds("NinjaTrader")
                         if bounds:
                             self.offset_x, self.offset_y, self.width, self.height = bounds
-                        else:
-                            self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("Media Player")
+                    #    else:
+                    #        self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("Media Player")
                             
                     #  Define dynamic monitor regions 
                     trim_right_ratio = 0.30   
@@ -482,7 +482,7 @@ class MarketWorker:
         #self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
         
         #AP's main machine
-        #self.model = YOLO()
+        self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100

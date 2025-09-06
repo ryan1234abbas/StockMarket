@@ -18,9 +18,9 @@ elif platform.system() == 'Windows':
     try:
         import pygetwindow as gw
 
-        windows = gw.getWindowsWithTitle('NinjaTrader')
-        if not windows:
-            windows = gw.getWindowsWithTitle('Media Player')
+        windows = gw.getWindowsWithTitle('NinjaTrader 8')
+        #if not windows:
+        #    windows = gw.getWindowsWithTitle('Media Player')
         
 
         if windows:
