@@ -311,15 +311,23 @@ class DetectionWorker(QThread):
                     }
                     
                     #change if needed, do not change left/right monitors
-                    right_monitor_trim = 255        # Pixels to trim from the right edge of the right monitor
-                    bottom_trim = 80                # Pixels to trim from the bottom (both monitors)
-                    left_monitor_right_trim = 150   # Pixels to trim from the right edge of the left monitor
-                    top_trim = 30                    # Pixels to trim from the top (both monitors)
-                    right_monitor_left_shift = 40   # Pixels to shift the right monitor cropping left
+                    trim_right = 255            # right monitor
+                    trim_bottom = 80            # both monitors
+                    trim_right_left_img = 150   # left monitor
+                    trim_top = 30               # both monitors
+                    shift_right = 40            # right monitor
 
-                    #These are the sides being passed into the program (where labels are detected)
-                    left_img = full[trim_top : h - trim_bottom, : (w // 2) - trim_right_left_img, :]
-                    right_img = full[trim_top : h - trim_bottom, (w // 2 - shift_right) : (w - trim_right - shift_right), :]
+                    left_img = full[
+                        trim_top : h - trim_bottom,
+                        : (w // 2) - trim_right_left_img,
+                        :
+                    ]
+
+                    right_img = full[
+                        trim_top : h - trim_bottom,
+                        (w // 2 - shift_right) : (w - trim_right - shift_right),
+                        :
+                    ]
 
                     #  Resize for model 
                     m32 = lambda v: ((v + 31) // 32) * 32
