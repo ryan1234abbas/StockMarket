@@ -11,6 +11,13 @@ import pyautogui
 import platform
 from collections import deque
 from datetime import date, datetime
+
+#buy/sell/both
+mode = input("Enter mode (buy / sell / both): ").strip().lower()
+while mode not in ("buy", "sell", "both"):
+    mode = input("Invalid input, enter buy, sell, or both: ").strip().lower()
+
+
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
     update_right = pyqtSignal(np.ndarray, list)
@@ -53,7 +60,7 @@ class DetectionWorker(QThread):
         self.sell_cooldown = 8.5  
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
-                        right_img, boxes_1510, labels_1510, scores_1510,
+                        right_img, boxes_1510, labels_1510, scores_1510, mode,
                         threshold=0.93):
         """
         Analyze candles using YOLO detections and determine BUY/SELL signals.
@@ -136,7 +143,7 @@ class DetectionWorker(QThread):
         now = time.time()
 
         # BUY logic
-        if rightmost_lbl_3020 == "HH" and rightmost_lbl_1510 == "HL":
+        if mode in ("buy", "both") and rightmost_lbl_3020 == "HH" and rightmost_lbl_1510 == "HL":
             if (current_signal != getattr(self, 'prev_trade_signal', None)
                 and now - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown):
 
@@ -164,7 +171,7 @@ class DetectionWorker(QThread):
                 print("Duplicate BUY signal, ignoring.")
 
         # SELL logic
-        elif rightmost_lbl_3020 == "LL" and rightmost_lbl_1510 == "LH":
+        elif mode in ("sell", "both") and rightmost_lbl_3020 == "LL" and rightmost_lbl_1510 == "LH":
             if current_signal != getattr(self, 'prev_trade_signal', None) \
             and now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
 
@@ -354,7 +361,7 @@ class DetectionWorker(QThread):
 
                     decision = self.analyze_candles_tm(
                         left_img, merged_left, merged_left_labels,left_conf,
-                        right_img, merged_right, merged_right_labels, right_conf
+                        right_img, merged_right, merged_right_labels, right_conf, mode
                     )
 
                     if decision:
