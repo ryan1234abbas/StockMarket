@@ -61,21 +61,33 @@ class DetectionWorker(QThread):
         self.sell_cooldown = 8.5  
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
-                            right_img, boxes_1510, labels_1510, scores_1510,
-                            mode, candle_boxes=None, candle_labels=None, threshold=0.93, right_sz=640):
+                        right_img, boxes_1510, labels_1510, scores_1510,
+                        mode, candle_boxes, candle_labels, threshold=0.93):
 
         """
         Analyze candles using YOLO detections and determine BUY/SELL signals.
         """
 
-        if candle_boxes is None:
-            candle_boxes = []
-        if candle_labels is None:
-            candle_labels = []
+        def get_rightmost_label(boxes, labels, scores, min_conf=0.15):
+            if not boxes:
+                return None, None, None
+
+            # Sort by x0 (left to right)
+            sorted_data = sorted(zip(boxes, labels, scores), key=lambda x: x[0][0])
+
+            # Filter by confidence threshold
+            filtered = [(box, label, score) for box, label, score in sorted_data if score >= min_conf]
+
+            if not filtered:
+                return None, None, None
+
+            # Rightmost = largest x1
+            rightmost = max(filtered, key=lambda x: x[0][2])
+            return rightmost[1], rightmost[0], rightmost[2]
 
         # Get rightmost label per monitor
-        rightmost_lbl_3020, box_3020, score_3020 = self.get_rightmost_label(boxes_3020, labels_3020, scores_3020, min_conf=0.30)
-        rightmost_lbl_1510, box_1510, score_1510 = self.get_rightmost_label(boxes_1510, labels_1510, scores_1510, min_conf=0.30)
+        rightmost_lbl_3020, box_3020, score_3020 = get_rightmost_label(boxes_3020, labels_3020, scores_3020, min_conf=0.30)
+        rightmost_lbl_1510, box_1510, score_1510 = get_rightmost_label(boxes_1510, labels_1510, scores_1510, min_conf=0.30)
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
         # Width tracking to detect new candle
@@ -85,12 +97,11 @@ class DetectionWorker(QThread):
         curr_width_3020 = box_width(box_3020)
         curr_width_1510 = box_width(box_1510)
 
-        '''uncomment these lines to observe model predictions'''
-
         # Save debug images with rightmost boxes
-        # debug_3020 = left_img.copy()
-        # debug_1510 = right_img.copy()
+        debug_3020 = left_img.copy()
+        debug_1510 = right_img.copy()
 
+        '''uncomment these lines to observe model predictions'''
         # if box_3020 is not None:
         #     x0, y0, x1, y1 = box_3020
         #     cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
@@ -132,6 +143,7 @@ class DetectionWorker(QThread):
                 self.prev_trade_signal = None
             self.prev_box_dims = curr_box_dims
 
+
         conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 is not None else "N/A"
         conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 is not None else "N/A"
 
@@ -139,15 +151,6 @@ class DetectionWorker(QThread):
         print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}")
 
         now = time.time()
-
-        # --- Run model2 only if valid candle combo exists ---
-        valid_combo = ((rightmost_lbl_3020 == "HH" and rightmost_lbl_1510 == "HL") or
-                    (rightmost_lbl_3020 == "LL" and rightmost_lbl_1510 == "LH"))
-        if valid_combo:
-            candle_formation = self.model2(
-                source=right_img, verbose=False, stream=False, conf=0.25, iou=0.3, imgsz=640
-            )
-            candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_formation)
 
         #1510 candle detection
         def has_black_candle(candle_boxes, candle_labels, label_box, label_type):
@@ -168,11 +171,15 @@ class DetectionWorker(QThread):
 
                 # Vertical check
                 if label_type == "HL" and cy1 < ly0:  # candle above label
+                    print(f"Valid black candle above HL label at: {cbox}")
                     return True
                 elif label_type == "LH" and cy0 > ly1:  # candle below label
+                    print(f"Valid black candle below LH label at: {cbox}")
                     return True
 
             return False
+
+
 
         # BUY logic
         if mode in ("buy", "both") and rightmost_lbl_3020 == "HH" and rightmost_lbl_1510 == "HL":
@@ -202,7 +209,7 @@ class DetectionWorker(QThread):
                 elif now - getattr(self, 'last_buy_time', 0) < self.buy_cooldown:
                     print("Buy cooldown active.")
                 else:
-                    print("Duplicate BUY signal, ignoring")
+                    print("Duplicate BUY signal, ignoring.")
 
             else:
                 print("No black candle above cannot buy")
@@ -234,34 +241,15 @@ class DetectionWorker(QThread):
                     elif now - getattr(self, 'last_sell_time', 0) < self.sell_cooldown:
                         print("Sell cooldown active.")
                     else:
-                        print("Duplicate SELL signal, ignoring")
+                        print("Duplicate SELL signal, ignoring.")
                 else:
                     print("No black candle below, cannot sell")
 
         # No valid trade signal
         else:
-            print("No valid trade signal")
+            print("No valid trade signal.")
 
         return None
-
-
-    def get_rightmost_label(self,boxes, labels, scores, min_conf=0.15):
-        if not boxes:
-            return None, None, None
-
-        # Sort by x0 (left to right)
-        sorted_data = sorted(zip(boxes, labels, scores), key=lambda x: x[0][0])
-
-        # Filter by confidence threshold
-        filtered = [(box, label, score) for box, label, score in sorted_data if score >= min_conf]
-
-        if not filtered:
-            return None, None, None
-
-        # Rightmost = largest x1
-        rightmost = max(filtered, key=lambda x: x[0][2])
-        return rightmost[1], rightmost[0], rightmost[2]
-
 
     def run(self):
 
@@ -415,16 +403,16 @@ class DetectionWorker(QThread):
                         source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
 
                     #1510 candle formation model detection
-                    # candle_formation = self.model2(
-                    #     source=right_img, verbose=False, stream=False, conf=0.25, iou=0.3, imgsz=right_sz
-                    # )
+                    candle_formation = self.model2(
+                        source=right_img, verbose=False, stream=False, conf=0.25, iou=0.3, imgsz=right_sz
+                    )
 
                     # Process results 
                     left_boxes, left_scores, left_labels, left_conf = self.process_results(left_results)
                     right_boxes, right_scores, right_labels, right_conf = self.process_results(right_results)
 
                     #process candle formation
-                    # candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_formation)
+                    candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_formation)
 
                     keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
                     merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
@@ -437,7 +425,7 @@ class DetectionWorker(QThread):
                     decision = self.analyze_candles_tm(
                         left_img, merged_left, merged_left_labels, left_conf,
                         right_img, merged_right, merged_right_labels, right_conf,
-                        mode
+                        mode, candle_boxes, candle_labels
                     )
 
                     if decision:
@@ -570,16 +558,15 @@ class MarketWorker:
         #Ryan's IMAC
         
         #Ryan's Laptop
-        # self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
-        # self.model2 = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
+        self.model2 = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
 
         #AP's Laptop
-        # self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
-        # self.model2 = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
-
-        #AP's main machine
-        self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")
-        self.model2 = YOLO("c:/Users/home/OneDrive/Desktop\StockMarket/runs/detect/train_19/weights/last.pt")
+        #self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
+        
+        #AP's main machine         
+        #self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")    
+        #self.model2 = YOLO("c:/Users/home/OneDrive/Desktop\StockMarket/runs/detect/train_19/weights/last.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100
