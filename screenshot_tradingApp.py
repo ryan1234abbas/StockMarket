@@ -2,14 +2,14 @@ import pyautogui
 import time
 import os
 
-time.sleep(2)
+time.sleep(3)
 region = (0,50,1000,760)
 
 os.makedirs("label_imgs", exist_ok=True)
 
 start_time = time.time()
 end_time = 0
-counter = 0
+counter = 209
 
 while end_time < 2400:
     counter += 1

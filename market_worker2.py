@@ -85,10 +85,43 @@ class DetectionWorker(QThread):
             rightmost = max(filtered, key=lambda x: x[0][2])
             return rightmost[1], rightmost[0], rightmost[2]
 
-        # Get rightmost label per monitor
+        def get_rightmost_candle(candle_boxes, candle_labels):
+            """Returns the rightmost candle (box and label) based on x1 coordinate."""
+            if not candle_boxes:
+                return None, None
+            idx = max(range(len(candle_boxes)), key=lambda i: candle_boxes[i][2])
+            return candle_labels[idx], candle_boxes[idx]
+
+        def get_closest_label_to_rm(boxes, labels, rm_box, buffer=2):
+            """
+            Return the label whose center x-coordinate is directly above/below the RM candle.
+            Only consider labels whose center ± buffer lies within candle x-range.
+            """
+            if not boxes or rm_box is None:
+                return None, None
+
+            cx0, _, cx1, _ = rm_box  # candle x-range
+            for box, label in zip(boxes, labels):
+                lx0, _, lx1, _ = box
+                label_center_x = (lx0 + lx1) // 2
+
+                # Check if label center ± buffer is within candle x-range
+                if (label_center_x + buffer >= cx0) and (label_center_x - buffer <= cx1):
+                    return label, box
+
+            return None, None
+
+
+        # Get rightmost label per monitor (3020 unchanged)
         rightmost_lbl_3020, box_3020, score_3020 = get_rightmost_label(boxes_3020, labels_3020, scores_3020, min_conf=0.30)
-        rightmost_lbl_1510, box_1510, score_1510 = get_rightmost_label(boxes_1510, labels_1510, scores_1510, min_conf=0.30)
-        current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
+
+        # 1510: RM-based closest label
+        rm_label_1510, rm_box_1510 = get_rightmost_candle(candle_boxes, candle_labels)
+        rightmost_lbl_1510, box_1510 = get_closest_label_to_rm(boxes_1510, labels_1510, rm_box_1510)
+        score_1510 = None
+        if box_1510 in boxes_1510:
+            idx = boxes_1510.index(box_1510)
+            score_1510 = scores_1510[idx]
 
         # Width tracking to detect new candle
         def box_width(box):
@@ -101,29 +134,28 @@ class DetectionWorker(QThread):
         debug_3020 = left_img.copy()
         debug_1510 = right_img.copy()
 
-        '''uncomment these lines to observe model predictions'''
-        # if box_3020 is not None:
-        #     x0, y0, x1, y1 = box_3020
-        #     cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
-        #     cv2.putText(debug_3020, rightmost_lbl_3020, (x0, y0-5),
-        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
+        if box_3020 is not None:
+            x0, y0, x1, y1 = box_3020
+            cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
+            cv2.putText(debug_3020, rightmost_lbl_3020, (x0, y0-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
 
-        # if box_1510 is not None:
-        #     x0, y0, x1, y1 = box_1510
-        #     cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 255, 0), 2)
-        #     cv2.putText(debug_1510, rightmost_lbl_1510, (x0, y0-5),
-        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
-        
-        # for cbox, clbl in zip(candle_boxes, candle_labels):
-        #     cx0, cy0, cx1, cy1 = cbox
-        #     color = (0, 0, 255)  # red for candles
-        #     cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), color, 2)
-        #     cv2.putText(debug_1510, clbl, (cx0, cy0-5),
-        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-                        
-        # os.makedirs("dummy", exist_ok=True)
-        # cv2.imwrite("dummy/debug_3020.png", debug_3020)
-        # cv2.imwrite("dummy/debug_1510.png", debug_1510)
+        if box_1510 is not None:
+            x0, y0, x1, y1 = box_1510
+            cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 255, 0), 2)
+            cv2.putText(debug_1510, rightmost_lbl_1510, (x0, y0-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
+
+        for cbox, clbl in zip(candle_boxes, candle_labels):
+            cx0, cy0, cx1, cy1 = cbox
+            color = (0, 0, 255)  # red for candles
+            cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), color, 2)
+            cv2.putText(debug_1510, clbl, (cx0, cy0-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+        os.makedirs("dummy", exist_ok=True)
+        cv2.imwrite("dummy/debug_3020.png", debug_3020)
+        cv2.imwrite("dummy/debug_1510.png", debug_1510)
 
         # Update previous widths
         self.prev_width_3020 = curr_width_3020
@@ -143,113 +175,68 @@ class DetectionWorker(QThread):
                 self.prev_trade_signal = None
             self.prev_box_dims = curr_box_dims
 
-
         conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 is not None else "N/A"
         conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 is not None else "N/A"
-
         print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}")
         print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}")
 
         now = time.time()
+        current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
-        #1510 candle detection
-        def has_black_candle(candle_boxes, candle_labels, label_box, label_type):
-            """
-            Returns True if a black candle exists directly under (LH) or above (HL) the label,
-            based on whether the candle's top-center falls within the label's horizontal span.
-            """
-            lx0, ly0, lx1, ly1 = label_box
-
-            for clbl, cbox in zip(candle_labels, candle_boxes):
-
-                cx0, cy0, cx1, cy1 = cbox
-                candle_top_center_x = (cx0 + cx1) // 2
-
-                # Check if candle top-center is horizontally within label's top edge
-                if not (lx0 <= candle_top_center_x <= lx1):
-                    continue
-
-                # Vertical check
-                if label_type == "HL" and cy1 < ly0:  # candle above label
-                    print(f"Valid black candle above HL label at: {cbox}")
-                    return True
-                elif label_type == "LH" and cy0 > ly1:  # candle below label
-                    print(f"Valid black candle below LH label at: {cbox}")
-                    return True
-
-            return False
-
-
-
-        # BUY logic
+        # BUY Logic 
         if mode in ("buy", "both") and rightmost_lbl_3020 == "HH" and rightmost_lbl_1510 == "HL":
-            # Require black candle above HL box
-            if box_1510 and has_black_candle(candle_boxes, candle_labels, box_1510, "HL"):
-                if (current_signal != getattr(self, 'prev_trade_signal', None)
-                    and now - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown):
-
+            if box_1510:
+                if current_signal != getattr(self, 'prev_trade_signal', None) and now - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown:
                     self.last_buy_time = now
                     self.buy_count = getattr(self, 'buy_count', 0) + 1
                     self.counter = getattr(self, 'counter', 0) + 1
                     self.prev_lbl_3020 = "HH"
                     self.prev_lbl_1510 = "HL"
                     self.prev_trade_signal = current_signal
-
                     try:
-                        buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
-                            'buy_sell/buy2.png', confidence=0.8
-                        )
+                        buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen('buy_sell/buy2.png', confidence=0.8)
                         if buy_btn:
                             self.cached_buy_btn = buy_btn
                             pyautogui.click(buy_btn)
                     except pyautogui.ImageNotFoundException:
                         pass  
                     return "BUY"
-
                 elif now - getattr(self, 'last_buy_time', 0) < self.buy_cooldown:
                     print("Buy cooldown active.")
                 else:
                     print("Duplicate BUY signal, ignoring.")
-
             else:
                 print("No black candle above cannot buy")
 
-        # SELL logic
+        #  SELL Logic 
         elif mode in ("sell", "both") and rightmost_lbl_3020 == "LL" and rightmost_lbl_1510 == "LH":
             if box_1510:
-                if has_black_candle(candle_boxes, candle_labels, box_1510, "LH"):
-                    if current_signal != getattr(self, 'prev_trade_signal', None) \
-                    and now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
-
-                        self.last_sell_time = now
-                        self.sell_count += 1
-                        self.prev_lbl_3020 = "LL"
-                        self.prev_lbl_1510 = "LH"
-                        self.prev_trade_signal = current_signal
-
-                        try:
-                            sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
-                                'buy_sell/sell2.png', confidence=0.8
-                            )
-                            if sell_btn:
-                                self.cached_sell_btn = sell_btn
-                                pyautogui.click(sell_btn)
-                        except pyautogui.ImageNotFoundException:
-                            pass  
-                        return "SELL"
-
-                    elif now - getattr(self, 'last_sell_time', 0) < self.sell_cooldown:
-                        print("Sell cooldown active.")
-                    else:
-                        print("Duplicate SELL signal, ignoring.")
+                if current_signal != getattr(self, 'prev_trade_signal', None) and now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
+                    self.last_sell_time = now
+                    self.sell_count += 1
+                    self.prev_lbl_3020 = "LL"
+                    self.prev_lbl_1510 = "LH"
+                    self.prev_trade_signal = current_signal
+                    try:
+                        sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen('buy_sell/sell2.png', confidence=0.8)
+                        if sell_btn:
+                            self.cached_sell_btn = sell_btn
+                            pyautogui.click(sell_btn)
+                    except pyautogui.ImageNotFoundException:
+                        pass  
+                    return "SELL"
+                elif now - getattr(self, 'last_sell_time', 0) < self.sell_cooldown:
+                    print("Sell cooldown active.")
                 else:
-                    print("No black candle below, cannot sell")
+                    print("Duplicate SELL signal, ignoring.")
+            else:
+                print("No black candle below, cannot sell")
 
-        # No valid trade signal
+        #  No valid trade 
         else:
             print("No valid trade signal.")
-
         return None
+
 
     def run(self):
 
@@ -374,10 +361,10 @@ class DetectionWorker(QThread):
                     
                     elif platform.system() == "Darwin":
                         trim_right = 300
-                        trim_bottom = 100
-                        trim_right_left_img = 200
+                        trim_bottom = 220
+                        trim_right_left_img = 230
                         trim_top = 50
-                        shift_right = 60
+                        shift_right = 230
 
                     left_img = full[
                         trim_top : h - trim_bottom,
@@ -558,15 +545,15 @@ class MarketWorker:
         #Ryan's IMAC
         
         #Ryan's Laptop
-        self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
-        self.model2 = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
+        # self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
+        # self.model2 = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
 
         #AP's Laptop
         #self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
         
         #AP's main machine         
-        #self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")    
-        #self.model2 = YOLO("c:/Users/home/OneDrive/Desktop\StockMarket/runs/detect/train_19/weights/last.pt")
+        self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")    
+        self.model2 = YOLO("c:/Users/home/OneDrive/Desktop\StockMarket/runs/detect/train_19/weights/last.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100
