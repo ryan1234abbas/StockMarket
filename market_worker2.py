@@ -579,7 +579,7 @@ class MarketWorker:
 
         #AP's main machine
         self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")
-        self.model2 = YOLO()
+        self.model2 = YOLO("c:/Users/home/OneDrive/Desktop\StockMarket/runs/detect/train_19/weights/last.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100
