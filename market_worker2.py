@@ -12,8 +12,6 @@ import platform
 from collections import deque
 from datetime import date, datetime
 
-
-
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
     update_right = pyqtSignal(np.ndarray, list)
@@ -44,6 +42,7 @@ class DetectionWorker(QThread):
         self.last_sell_time = 0
         self.curr_1510 = None
         self.curr_box_1510 = None
+        self.last_triggered_box = None
         self.histories = {
             '3020': deque(maxlen=2),
             '1510': deque(maxlen=2)
@@ -177,9 +176,11 @@ class DetectionWorker(QThread):
             cx0, cy0, cx1, cy1 = rightmost_candle
             lx0, ly0, lx1, ly1 = target_box
             
+            print(f"Rightmost candle coords: [{cx0}, {cy0}, {cx1}, {cy1}]")
+
             # Check if candle is near the target box
             candle_center_x = (cx0 + cx1) // 2
-            if lx0-15 <= candle_center_x <= lx1+15:
+            if lx0-10 <= candle_center_x <= lx1+10:
                 if label_type == "HL" and cy1 < ly0:  # Candle below HL box
                     return True
                 elif label_type == "LH" and cy0 > ly1:  # Candle above LH box
@@ -198,13 +199,17 @@ class DetectionWorker(QThread):
 
         if rightmost_lbl_3020 == "HH" and self.curr_1510 == "HL":
             if self.curr_box_1510 and has_black_candle(candle_boxes, candle_labels, self.curr_box_1510, "HL"):
-                trigger_buy = True
-                print("BUY trigger: HH + HL + black candle")
+                if self.last_triggered_box != self.curr_box_1510:  # 🔑 new candle only
+                    trigger_buy = True
+                    self.last_triggered_box = self.curr_box_1510
+                    print("BUY trigger: HH + HL + black candle")
 
         elif rightmost_lbl_3020 == "LL" and self.curr_1510 == "LH":
             if self.curr_box_1510 and has_black_candle(candle_boxes, candle_labels, self.curr_box_1510, "LH"):
-                trigger_sell = True
-                print("SELL trigger: LL + LH + black candle")
+                if self.last_triggered_box != self.curr_box_1510:  # 🔑 new candle only
+                    trigger_sell = True
+                    self.last_triggered_box = self.curr_box_1510
+                    print("SELL trigger: LL + LH + black candle")
 
         # --- Execute BUY ---
         if mode in ("buy", "both") and trigger_buy and not self.pending_trade_executed:
