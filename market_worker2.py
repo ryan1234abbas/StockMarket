@@ -43,6 +43,9 @@ class DetectionWorker(QThread):
         self.curr_1510 = None
         self.curr_box_1510 = None
         self.last_triggered_box = None
+        self.traded_boxes = []  # List of boxes that have already been traded
+        self.trade_memory_size = 10  # Keep last N traded boxes
+        self.trade_cooldown = 8  # Seconds between trades on same pattern type
 
         self.histories = {
             '3020': deque(maxlen=2),
@@ -55,8 +58,8 @@ class DetectionWorker(QThread):
 
         #change based on speed of market
         #change based on desired buy/sell frequency
-        self.buy_cooldown = 8   
-        self.sell_cooldown = 8  
+        self.buy_cooldown = 7   
+        self.sell_cooldown = 7 
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
                             right_img, boxes_1510, labels_1510, scores_1510,
@@ -187,7 +190,7 @@ class DetectionWorker(QThread):
 
             # Check if candle is near the target box
             candle_center_x = (cx0 + cx1) // 2
-            if lx0-15 <= candle_center_x <= lx1+15:
+            if lx0-5 <= candle_center_x <= lx1+5:
                 if label_type == "HL" and cy1 < ly0:  # Candle below HL box
                     return True
                 elif label_type == "LH" and cy0 > ly1:  # Candle above LH box
@@ -214,12 +217,21 @@ class DetectionWorker(QThread):
                 trigger_sell = True
                 print("SELL trigger: LL + LH + black candle")
 
+        def is_same_trade(box1, box2, tol=30):
+            """Check if two boxes are horizontally close enough to be considered the same trade."""
+            if not box1 or not box2:
+                return False
+            return abs(box1[0] - box2[0]) <= tol  # horizontal tolerance only
+
         # --- Execute BUY ---
         if mode in ("buy", "both") and trigger_buy and not self.pending_trade_executed:
-            if self.last_triggered_box != self.curr_box_1510 and now - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown:
-                self.last_buy_time = now
+            if not is_same_trade(self.last_triggered_box, self.curr_box_1510) and \
+            time.time() - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown:
+                
+                self.last_buy_time = time.time()
                 self.buy_count += 1
                 self.prev_trade_signal = current_signal
+                self.last_triggered_box = self.curr_box_1510
                 
                 try:
                     buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen('buy_sell/buy2.png', confidence=0.8)
@@ -230,7 +242,7 @@ class DetectionWorker(QThread):
                 except pyautogui.ImageNotFoundException:
                     print("Buy button not found")
                 
-                # Reset sticky to CURRENT detection (not stale values)
+                # Reset sticky to CURRENT detection
                 self.curr_1510 = rightmost_lbl_1510
                 self.curr_box_1510 = box_1510
                 self.pending_trade_executed = True
@@ -240,10 +252,13 @@ class DetectionWorker(QThread):
 
         # --- Execute SELL ---
         elif mode in ("sell", "both") and trigger_sell and not self.pending_trade_executed:
-            if self.last_triggered_box != self.curr_box_1510 and now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
-                self.last_sell_time = now
+            if not is_same_trade(self.last_triggered_box, self.curr_box_1510) and \
+            time.time() - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
+                
+                self.last_sell_time = time.time()
                 self.sell_count += 1
                 self.prev_trade_signal = current_signal
+                self.last_triggered_box = self.curr_box_1510
                 
                 try:
                     sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen('buy_sell/sell2.png', confidence=0.8)
@@ -254,17 +269,19 @@ class DetectionWorker(QThread):
                 except pyautogui.ImageNotFoundException:
                     print("Sell button not found")
                 
-                # Reset sticky to CURRENT detection (not stale values)
+                # Reset sticky to CURRENT detection
                 self.curr_1510 = rightmost_lbl_1510
                 self.curr_box_1510 = box_1510
                 self.pending_trade_executed = True
                 return "SELL"
             else:
                 print("Sell cooldown or duplicate signal, skipping")
+
         else:
             print("No valid trade signal")
 
         return None
+
 
 
 
@@ -587,16 +604,16 @@ class MarketWorker:
         #Ryan's IMAC
         
         #Ryan's Laptop
-        self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
-        self.model2 = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
+        # self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
+        # self.model2 = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
 
         #AP's Laptop
         # self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
         # self.model2 = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
 
         # AP's main machine
-        # self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")
-        # self.model2 = YOLO("c:/Users/home/OneDrive/Desktop\StockMarket/runs/detect/train_19/weights/last.pt")
+        self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")
+        self.model2 = YOLO("c:/Users/home/OneDrive/Desktop\StockMarket/runs/detect/train_19/weights/last.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100
