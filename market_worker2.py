@@ -43,6 +43,7 @@ class DetectionWorker(QThread):
         self.curr_1510 = None
         self.curr_box_1510 = None
         self.last_triggered_box = None
+
         self.histories = {
             '3020': deque(maxlen=2),
             '1510': deque(maxlen=2)
@@ -54,8 +55,8 @@ class DetectionWorker(QThread):
 
         #change based on speed of market
         #change based on desired buy/sell frequency
-        self.buy_cooldown = 5   
-        self.sell_cooldown = 5  
+        self.buy_cooldown = 8   
+        self.sell_cooldown = 8  
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
                             right_img, boxes_1510, labels_1510, scores_1510,
@@ -117,9 +118,15 @@ class DetectionWorker(QThread):
 
         print(f"curr_1510: {self.curr_1510} | curr_box_1510: {self.curr_box_1510}")
 
-        # --- Run candle detection (model2) ---
-        candle_formation = self.model2(source=right_img, verbose=False, stream=False, conf=0.25, iou=0.3, imgsz=640)
-        candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_formation)
+        # --- Run candle detection only if valid combo ---
+        if (rightmost_lbl_3020 == "HH" and self.curr_1510 == "HL") or \
+        (rightmost_lbl_3020 == "LL" and self.curr_1510 == "LH"):
+            candle_formation = self.model2(
+                source=right_img, verbose=False, stream=False, conf=0.25, iou=0.3, imgsz=640
+            )
+            candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_formation)
+        else:
+            candle_boxes, candle_scores, candle_labels = [], [], []
 
         # --- Update sticky box from actual candles if available ---
         if self.curr_1510 in ("HL", "LH"):
@@ -176,11 +183,11 @@ class DetectionWorker(QThread):
             cx0, cy0, cx1, cy1 = rightmost_candle
             lx0, ly0, lx1, ly1 = target_box
             
-            print(f"Rightmost candle coords: [{cx0}, {cy0}, {cx1}, {cy1}]")
+            print(f"Rightmost candle at: {cx0}, {cx1}")
 
             # Check if candle is near the target box
             candle_center_x = (cx0 + cx1) // 2
-            if lx0-10 <= candle_center_x <= lx1+10:
+            if lx0-15 <= candle_center_x <= lx1+15:
                 if label_type == "HL" and cy1 < ly0:  # Candle below HL box
                     return True
                 elif label_type == "LH" and cy0 > ly1:  # Candle above LH box
@@ -199,21 +206,17 @@ class DetectionWorker(QThread):
 
         if rightmost_lbl_3020 == "HH" and self.curr_1510 == "HL":
             if self.curr_box_1510 and has_black_candle(candle_boxes, candle_labels, self.curr_box_1510, "HL"):
-                if self.last_triggered_box != self.curr_box_1510:  # 🔑 new candle only
-                    trigger_buy = True
-                    self.last_triggered_box = self.curr_box_1510
-                    print("BUY trigger: HH + HL + black candle")
+                trigger_buy = True
+                print("BUY trigger: HH + HL + black candle")
 
         elif rightmost_lbl_3020 == "LL" and self.curr_1510 == "LH":
             if self.curr_box_1510 and has_black_candle(candle_boxes, candle_labels, self.curr_box_1510, "LH"):
-                if self.last_triggered_box != self.curr_box_1510:  # 🔑 new candle only
-                    trigger_sell = True
-                    self.last_triggered_box = self.curr_box_1510
-                    print("SELL trigger: LL + LH + black candle")
+                trigger_sell = True
+                print("SELL trigger: LL + LH + black candle")
 
         # --- Execute BUY ---
         if mode in ("buy", "both") and trigger_buy and not self.pending_trade_executed:
-            if current_signal != getattr(self, 'prev_trade_signal', None) and now - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown:
+            if self.last_triggered_box != self.curr_box_1510 and now - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown:
                 self.last_buy_time = now
                 self.buy_count += 1
                 self.prev_trade_signal = current_signal
@@ -237,7 +240,7 @@ class DetectionWorker(QThread):
 
         # --- Execute SELL ---
         elif mode in ("sell", "both") and trigger_sell and not self.pending_trade_executed:
-            if current_signal != getattr(self, 'prev_trade_signal', None) and now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
+            if self.last_triggered_box != self.curr_box_1510 and now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
                 self.last_sell_time = now
                 self.sell_count += 1
                 self.prev_trade_signal = current_signal
@@ -262,7 +265,6 @@ class DetectionWorker(QThread):
             print("No valid trade signal")
 
         return None
-
 
 
 
