@@ -43,23 +43,11 @@ class DetectionWorker(QThread):
         self.curr_1510 = None
         self.curr_box_1510 = None
         self.last_triggered_box = None
-        self.traded_boxes = []  # List of boxes that have already been traded
-        self.trade_memory_size = 10  # Keep last N traded boxes
-        self.trade_cooldown = 8  # Seconds between trades on same pattern type
-
-        self.histories = {
-            '3020': deque(maxlen=2),
-            '1510': deque(maxlen=2)
-        }
-        self.prev_labels = {
-            '3020': {'x0': None, 'label': None},
-            '1510': {'x0': None, 'label': None}
-        }
 
         #change based on speed of market
         #change based on desired buy/sell frequency
-        self.buy_cooldown = 7   
-        self.sell_cooldown = 7 
+        self.buy_cooldown = 6   
+        self.sell_cooldown = 6 
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
                             right_img, boxes_1510, labels_1510, scores_1510,
@@ -604,16 +592,16 @@ class MarketWorker:
         #Ryan's IMAC
         
         #Ryan's Laptop
-        # self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
-        # self.model2 = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
+        self.model2 = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
 
         #AP's Laptop
         # self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
         # self.model2 = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
 
         # AP's main machine
-        self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")
-        self.model2 = YOLO("c:/Users/home/OneDrive/Desktop\StockMarket/runs/detect/train_19/weights/last.pt")
+        # self.model = YOLO("C:/Users/home/OneDrive/Desktop/StockMarket/runs/detect2/train8/weights/best.pt")
+        # self.model2 = YOLO("c:/Users/home/OneDrive/Desktop\StockMarket/runs/detect/train_19/weights/last.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100
