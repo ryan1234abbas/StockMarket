@@ -270,11 +270,6 @@ class DetectionWorker(QThread):
 
         return None
 
-
-
-
-
-
     def get_rightmost_label(self,boxes, labels, scores, min_conf=0.15):
         if not boxes:
             return None, None, None
@@ -598,8 +593,10 @@ class MarketWorker:
         # self.model2 = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
 
         # AP's main machine
-        self.model = YOLO("C:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/detect2/train8/weights/best.pt")
-        self.model2 = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/detect/train_19/weights/last.pt")
+        '''label model'''
+        #self.model = YOLO("C:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/detect2/train8/weights/best.pt")
+        '''candle model'''
+        #self.model2 = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/detect/train_19/weights/last.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100

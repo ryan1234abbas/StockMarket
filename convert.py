@@ -1,16 +1,16 @@
 import os
 import xml.etree.ElementTree as ET
 
-# Mapping your labels to YOLO IDs
 class_map = {
-    "LH": 0,
-    "HL": 1,
-    "LL": 2,
-    "HH": 3
+    "candle":0,
+    "LH": 1,
+    "HL": 2,
+    "LL": 3,
+    "HH": 4
 }
 
-folder = "/Users/ryanabbas/Desktop/work/StockMarket/backup_label_imgs2"
-output_dir = folder
+folder = "/Users/ryanabbas/Desktop/work/StockMarket/xml files"
+output_dir = "/Users/ryanabbas/Desktop/work/StockMarket/txt files"
 os.makedirs(output_dir, exist_ok=True)
 
 for filename in os.listdir(folder):

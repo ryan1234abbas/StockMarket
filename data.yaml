@@ -1,0 +1,4 @@
+train: 'images/train'
+val: 'images/val'
+nc: 5
+names: ['candle', 'LH', 'HL', 'LL', 'HH']
