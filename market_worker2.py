@@ -17,10 +17,9 @@ class DetectionWorker(QThread):
     update_right = pyqtSignal(np.ndarray, list)
     finished = pyqtSignal()
 
-    def __init__(self, model, model2, offset_x, offset_y, width, height, total_frames):
+    def __init__(self, model, offset_x, offset_y, width, height, total_frames):
         super().__init__()
         self.model = model
-        self.model2 = model2
         self.offset_x = offset_x
         self.offset_y = offset_y
         self.width = width
@@ -107,7 +106,7 @@ class DetectionWorker(QThread):
             self.curr_1510 = rightmost_lbl_1510
             self.curr_box_1510 = box_1510
 
-        print(f"curr_1510: {self.curr_1510} | curr_box_1510: {self.curr_box_1510}")
+        print(f"curr_1510: {self.curr_1510}")
 
         # --- Run candle detection only if valid combo ---
         if (rightmost_lbl_3020 == "HH" and self.curr_1510 == "HL") or \
@@ -462,7 +461,6 @@ class DetectionWorker(QThread):
                     print(f"Number of buys: {self.buy_count}")
                     print(f"Number of sells: {self.sell_count}")
 
-
                     # Frame stats
                     self.frame_count += 1
                     frame_processing_time = time.time() - start_time
@@ -585,18 +583,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):      
         #Ryan's Laptop
-        # self.model = YOLO("/Users/ryanabbas/Desktop/work/StockMarket/runs/detect2/train8/weights/best.pt")
-        # self.model2 = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/detect/train_19/weights/last.pt')
+        self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
 
         #AP's Laptop
         # self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
-        # self.model2 = YOLO('/Users/Owner/StockMarket/runs/detect/train_19/weights/last.pt')
 
         # AP's main machine
-        '''label model'''
         #self.model = YOLO("C:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/detect2/train8/weights/best.pt")
-        '''candle model'''
-        #self.model2 = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/detect/train_19/weights/last.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100
@@ -607,7 +600,6 @@ class MarketWorker:
         
         self.detection_thread = DetectionWorker(
             model=self.model,
-            model2=self.model2,
             offset_x=self.offset_x,
             offset_y=self.offset_y,
             width=self.width,
