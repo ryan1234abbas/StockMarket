@@ -56,7 +56,7 @@ class DetectionWorker(QThread):
         if candle_labels is None:
             candle_labels = []
 
-        # --- Initialize sticky variables if needed ---
+        # --- Initialize sticky vars ---
         if not hasattr(self, 'curr_1510'):
             self.curr_1510 = None
         if not hasattr(self, 'curr_box_1510'):
@@ -66,123 +66,101 @@ class DetectionWorker(QThread):
         if not hasattr(self, 'last_3020_pattern'):
             self.last_3020_pattern = None
 
-        # --- Get rightmost labels and boxes ---
-        rightmost_lbl_3020, box_3020, score_3020 = self.get_rightmost_label(
-            boxes_3020, labels_3020, scores_3020, min_conf=0.30)
-        rightmost_lbl_1510, box_1510, score_1510 = self.get_rightmost_label(
-            boxes_1510, labels_1510, scores_1510, min_conf=0.30)
+        # --- Get rightmost 3020 + 1510 ---
+        rightmost_lbl_3020, box_3020, score_3020 = self.get_rightmost_label(boxes_3020, labels_3020, scores_3020, min_conf=0.30)
+        rightmost_lbl_1510, box_1510, score_1510 = self.get_rightmost_label(boxes_1510, labels_1510, scores_1510, min_conf=0.30)
         current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
 
-        # --- Get all HL/LH boxes from current detection ---
+        # --- HL/LH sets ---
         hl_boxes = [b for b, l in zip(boxes_1510, labels_1510) if l == "HL"]
         lh_boxes = [b for b, l in zip(boxes_1510, labels_1510) if l == "LH"]
         rightmost_hl = max(hl_boxes, key=lambda b: b[0]) if hl_boxes else None
         rightmost_lh = max(lh_boxes, key=lambda b: b[0]) if lh_boxes else None
 
-        # --- Reset sticky if 3020 pattern changes ---
-        if self.last_3020_pattern != rightmost_lbl_3020:
+        # --- Sticky update logic ---
+        # Case 1: first-time init
+        if self.curr_1510 is None:
             self.curr_1510 = rightmost_lbl_1510
             self.curr_box_1510 = box_1510
             self.pending_trade_executed = False
-        self.last_3020_pattern = rightmost_lbl_3020
 
-        # --- Sticky HL/LH logic based on 3020 ---
-        if rightmost_lbl_3020 == "HH" and hl_boxes:
-            # Always update both label AND box when HH pattern detected
-            self.curr_1510 = "HL"
-            self.curr_box_1510 = rightmost_hl
+        # Case 2: reset after trade executed
+        elif self.pending_trade_executed:
+            self.curr_1510 = rightmost_lbl_1510
+            self.curr_box_1510 = box_1510
             self.pending_trade_executed = False
-            print(f"Sticky set to HL with box: {self.curr_box_1510}")
 
-        elif rightmost_lbl_3020 == "LL" and lh_boxes:
-            # Always update both label AND box when LL pattern detected
-            self.curr_1510 = "LH"
-            self.curr_box_1510 = rightmost_lh
-            self.pending_trade_executed = False
-            print(f"Sticky set to LH with box: {self.curr_box_1510}")
-
-        elif rightmost_lbl_3020 not in ("HH", "LL"):
-            # Reset to current detection for non-HH/LL patterns
+        # Case 3: reset if setup invalidates (3020 no longer HH/LL while sticky is active)
+        elif self.curr_1510 in ("HL", "LH") and rightmost_lbl_3020 not in ("HH", "LL"):
             self.curr_1510 = rightmost_lbl_1510
             self.curr_box_1510 = box_1510
 
-        print(f"curr_1510: {self.curr_1510}")
 
-        # --- Run candle detection only if valid combo ---
+        # --- Run SAME model for candles ---
+        candle_boxes, candle_scores, candle_labels = [], [], []
         if (rightmost_lbl_3020 == "HH" and self.curr_1510 == "HL") or \
         (rightmost_lbl_3020 == "LL" and self.curr_1510 == "LH"):
-            candle_formation = self.model2(
+            results = self.model(
                 source=right_img, verbose=False, stream=False, conf=0.25, iou=0.3, imgsz=640
             )
-            candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_formation)
-        else:
-            candle_boxes, candle_scores, candle_labels = [], [], []
+            candle_boxes, candle_scores, candle_labels, _ = self.process_results(results)
 
-        # --- Update sticky box from actual candles if available ---
+        # --- Sync sticky box with candles ---
         if self.curr_1510 in ("HL", "LH"):
-            matching_candles = [cbox for cbox, clbl in zip(candle_boxes, candle_labels) if clbl == self.curr_1510]
-            if matching_candles:
-                # Update with the rightmost matching candle
-                new_box = max(matching_candles, key=lambda b: b[0])
+            matches = [cbox for cbox, clbl in zip(candle_boxes, candle_labels) if clbl == self.curr_1510]
+            if matches:
+                new_box = max(matches, key=lambda b: b[0])
                 if new_box != self.curr_box_1510:
                     self.curr_box_1510 = new_box
-                    print(f"Updated sticky {self.curr_1510} box to: {self.curr_box_1510}")
 
-        # --- Debug images ---
-        debug_3020 = left_img.copy()
-        debug_1510 = right_img.copy()
-
-        # Draw 3020 detection
+        # --- Draw debug images ---
+        debug_3020, debug_1510 = left_img.copy(), right_img.copy()
         if box_3020:
             x0, y0, x1, y1 = box_3020
             cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
-            cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})", 
-                    (x0, y0-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-        # Draw 1510 detection
+            cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})",
+                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
         if box_1510:
             x0, y0, x1, y1 = box_1510
             cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 255, 0), 2)
-            cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})", 
-                    (x0, y0-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-        # Draw sticky box
+            cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})",
+                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
         if self.curr_box_1510:
             x0, y0, x1, y1 = self.curr_box_1510
             cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 3)
-            cv2.putText(debug_1510, f"STICKY: {self.curr_1510}", 
-                    (x0, y0-25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-
-        # Draw candle detections
+            cv2.putText(debug_1510, f"STICKY: {self.curr_1510}",
+                        (x0, y0 - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,0,0), 2)
         for cbox, clbl in zip(candle_boxes, candle_labels):
             cx0, cy0, cx1, cy1 = cbox
-            cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 0, 255), 2)
-            cv2.putText(debug_1510, clbl, (cx0, cy0-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0,0,255), 2)
+            cv2.putText(debug_1510, clbl, (cx0, cy0-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
 
         os.makedirs("dummy", exist_ok=True)
         cv2.imwrite("dummy/debug_3020.png", debug_3020)
         cv2.imwrite("dummy/debug_1510.png", debug_1510)
 
-        # --- Helper: Check for black candle ---
+        # --- Trade triggers ---
         def has_black_candle(c_boxes, c_labels, target_box, label_type):
             if not c_boxes or not target_box:
                 return False
-            
-            # Find the rightmost candle
             rightmost_candle = max(c_boxes, key=lambda b: (b[0] + b[2]) / 2)
             cx0, cy0, cx1, cy1 = rightmost_candle
             lx0, ly0, lx1, ly1 = target_box
-            
-            print(f"Rightmost candle at: {cx0}, {cx1}")
-
-            # Check if candle is near the target box
-            candle_center_x = (cx0 + cx1) // 2
-            if lx0-5 <= candle_center_x <= lx1+5:
-                if label_type == "HL" and cy1 < ly0:  # Candle below HL box
+            center_x = (cx0 + cx1) // 2
+            if lx0-5 <= center_x <= lx1+5:
+                if label_type == "HL" and cy1 < ly0:
                     return True
-                elif label_type == "LH" and cy0 > ly1:  # Candle above LH box
+                elif label_type == "LH" and cy0 > ly1:
                     return True
             return False
+
+        trigger_buy = trigger_sell = False
+        if rightmost_lbl_3020 == "HH" and self.curr_1510 == "HL":
+            if self.curr_box_1510 and has_black_candle(candle_boxes, candle_labels, self.curr_box_1510, "HL"):
+                trigger_buy = True
+        elif rightmost_lbl_3020 == "LL" and self.curr_1510 == "LH":
+            if self.curr_box_1510 and has_black_candle(candle_boxes, candle_labels, self.curr_box_1510, "LH"):
+                trigger_sell = True
 
         conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 else "N/A"
         conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 else "N/A"
@@ -269,22 +247,24 @@ class DetectionWorker(QThread):
 
         return None
 
-    def get_rightmost_label(self,boxes, labels, scores, min_conf=0.15):
-        if not boxes:
+    def get_rightmost_label(self, boxes, labels, scores, min_conf=0.30):
+        valid_labels = {"HH", "LL", "HL", "LH"}
+
+        if not boxes or not labels or not scores:
             return None, None, None
 
-        # Sort by x0 (left to right)
-        sorted_data = sorted(zip(boxes, labels, scores), key=lambda x: x[0][0])
-
-        # Filter by confidence threshold
-        filtered = [(box, label, score) for box, label, score in sorted_data if score >= min_conf]
+        # Only keep boxes with valid labels + above confidence
+        filtered = [
+            (b, l, s) for b, l, s in zip(boxes, labels, scores)
+            if l in valid_labels and s >= min_conf
+        ]
 
         if not filtered:
             return None, None, None
 
-        # Rightmost = largest x1
-        rightmost = max(filtered, key=lambda x: x[0][2])
-        return rightmost[1], rightmost[0], rightmost[2]
+        # Pick the rightmost among valid ones
+        box, label, score = max(filtered, key=lambda x: x[0][0])  # x[0][0] = leftmost x coord
+        return label, box, score
 
 
     def run(self):
