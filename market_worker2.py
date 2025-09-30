@@ -81,32 +81,13 @@ class DetectionWorker(QThread):
         lh_boxes = [b for b, l in zip(boxes_1510, labels_1510) if l == "LH"]
         rightmost_hl = max(hl_boxes, key=lambda b: b[0]) if hl_boxes else None
         rightmost_lh = max(lh_boxes, key=lambda b: b[0]) if lh_boxes else None
+        
 
-        # --- Sticky update logic (look-back aware) ---
-        if self.curr_1510 is None:
-            # First-time init
+        # Always assign rightmost detection (like first-time init)
+        if rightmost_lbl_1510 in ("HL", "LH"):
             self.curr_1510 = rightmost_lbl_1510
             self.curr_box_1510 = box_1510
-
-        elif self.pending_trade_executed:
-            # Reset after trade executed
-            self.pending_trade_executed = False
-
-        else:
-            # Only update sticky if trend changes in 1510 relative to 3020
-            if self.curr_1510 in ("HL", "LH"):
-                matches = [cbox for cbox, clbl in zip(candle_boxes, candle_labels) if clbl == self.curr_1510]
-                if matches:
-                    # Keep sticky, pick rightmost matching candle
-                    self.curr_box_1510 = max(matches, key=lambda b: b[0])
-                else:
-                    # Sticky invalid, assign new detection
-                    self.curr_1510 = rightmost_lbl_1510
-                    self.curr_box_1510 = box_1510
-            else:
-                # If current sticky is None or not HL/LH, assign current detection
-                self.curr_1510 = rightmost_lbl_1510
-                self.curr_box_1510 = box_1510
+        print(f"Sticky label coord:{self.curr_box_1510}")
 
         conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 else "N/A" 
         conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 else "N/A" 
@@ -121,10 +102,19 @@ class DetectionWorker(QThread):
         candle_boxes, candle_scores, candle_labels, _ = self.process_results(results)
 
         candle_x0_x1 = []
-        if candle_boxes:
-            rightmost_candle = max(candle_boxes, key=lambda b: b[0])
+        rightmost_candle = max(candle_boxes, key=lambda b: b[0]) if candle_boxes else None
+        if rightmost_candle:
             cx0, cy0, cx1, cy1 = rightmost_candle
-            candle_x0_x1.extend([cx0, cx1])
+            # safe to use inside here
+        else:
+            cx0 = cy0 = cx1 = cy1 = None
+
+        candle_x0_x1.extend([cx0, cx1])
+    
+        if candle_boxes:
+            print(f"Rightmost candle box coords: {rightmost_candle}")
+        else:
+            print("No candles detected")
 
         # --- Sync sticky box with candles ---
         if self.curr_1510 in ("HL", "LH"):
@@ -151,6 +141,13 @@ class DetectionWorker(QThread):
             cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 2)
             cv2.putText(debug_1510, f"STICKY: {self.curr_1510}", (x0, y0-25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,0,0), 2)
+        
+        # Draw all detected candles
+        for cbox, clbl in zip(candle_boxes, candle_labels):
+            if clbl == "candle": 
+                x0, y0, x1, y1 = cbox
+                cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 0, 255), 2)
+                 
         os.makedirs("dummy", exist_ok=True)
         cv2.imwrite("dummy/debug_3020.png", debug_3020)
         cv2.imwrite("dummy/debug_1510.png", debug_1510)
@@ -168,15 +165,6 @@ class DetectionWorker(QThread):
                     return True
             return False
 
-        # --- Determine triggers ---
-        trigger_buy = trigger_sell = False
-        if self.curr_1510 == "HL" and rightmost_lbl_3020 == "HH":
-            if self.curr_box_1510 and has_black_candle(candle_x0_x1[0], candle_x0_x1[1], candle_labels, self.curr_box_1510, "HL"):
-                trigger_buy = True
-        elif self.curr_1510 == "LH" and rightmost_lbl_3020 == "LL":
-            if self.curr_box_1510 and has_black_candle(candle_x0_x1[0], candle_x0_x1[1], candle_labels, self.curr_box_1510, "LH"):
-                trigger_sell = True
-
         # --- Execute trades ---
         def is_same_trade(box1, box2, tol=30):
             if not box1 or not box2:
@@ -185,7 +173,8 @@ class DetectionWorker(QThread):
 
         now = time.time()
 
-        if mode in ("buy", "both") and trigger_buy and not self.pending_trade_executed:
+        def execute_buy(current_signal):
+            now = time.time()
             if not is_same_trade(getattr(self, 'last_triggered_box', None), self.curr_box_1510) and \
             now - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown:
 
@@ -203,10 +192,12 @@ class DetectionWorker(QThread):
                         print("BUY executed")
                 except pyautogui.ImageNotFoundException:
                     print("Buy button not found")
-
                 return "BUY"
+            return None
 
-        elif mode in ("sell", "both") and trigger_sell and not self.pending_trade_executed:
+
+        def execute_sell(current_signal):
+            now = time.time()
             if not is_same_trade(getattr(self, 'last_triggered_box', None), self.curr_box_1510) and \
             now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
 
@@ -224,30 +215,57 @@ class DetectionWorker(QThread):
                         print("SELL executed")
                 except pyautogui.ImageNotFoundException:
                     print("Sell button not found")
-
                 return "SELL"
+            return None
 
-        return None
+        # --- Determine triggers ---
+        trigger_buy = trigger_sell = False
+        if self.curr_1510 == "HL" and rightmost_lbl_3020 == "HH":
+            if self.curr_box_1510 and has_black_candle(candle_x0_x1[0], candle_x0_x1[1], rightmost_candle, self.curr_box_1510, "HL"):
+                trigger_buy = True
+        
+        elif self.curr_1510 == "LH" and rightmost_lbl_3020 == "LL":
+            if self.curr_box_1510 and has_black_candle(candle_x0_x1[0], candle_x0_x1[1], rightmost_candle, self.curr_box_1510, "LH"):
+                trigger_sell = True
 
-   
+        # --- Execute trades ---
+        decision = None
+        if mode in ("buy", "both") and trigger_buy and not self.pending_trade_executed:
+            decision = execute_buy(current_signal)
+        elif mode in ("sell", "both") and trigger_sell and not self.pending_trade_executed:
+            decision = execute_sell(current_signal)
+
+        # --- Update sticky AFTER trade ---
+        matches = [cbox for cbox, clbl in zip(candle_boxes, candle_labels) if clbl == "candle"]
+        if matches:
+            self.curr_box_1510 = max(matches, key=lambda b: b[0])
+            self.curr_1510 = rightmost_lbl_1510 if rightmost_lbl_1510 in ("HL", "LH") else self.curr_1510
+        else:
+            self.curr_box_1510 = None
+            self.curr_1510 = None
+
+        return decision
+
+
     def get_rightmost_label(self, boxes, labels, scores, min_conf=0.30):
-        valid_labels = {"HH", "LL", "HL", "LH"}
+            valid_labels = {"HH", "LL", "HL", "LH"}
 
-        if not boxes or not labels or not scores:
-            return None, None, None
+            if not boxes or not labels or not scores:
+                return None, None, None
 
-        # Only keep boxes with valid labels + above confidence
-        filtered = [
-            (b, l, s) for b, l, s in zip(boxes, labels, scores)
-            if l in valid_labels and s >= min_conf
-        ]
+            # Only keep boxes with valid labels + above confidence
+            filtered = [
+                (b, l, s) for b, l, s in zip(boxes, labels, scores)
+                if l in valid_labels and s >= min_conf
+            ]
 
-        if not filtered:
-            return None, None, None
+            if not filtered:
+                return None, None, None
 
-        # Pick the rightmost among valid ones
-        box, label, score = max(filtered, key=lambda x: x[0][0])  # x[0][0] = leftmost x coord
-        return label, box, score
+            # Pick the rightmost among valid ones
+            box, label, score = max(filtered, key=lambda x: x[0][0])  # x[0][0] = leftmost x coord
+            return label, box, score
+
 
 
     def run(self):
@@ -370,10 +388,12 @@ class DetectionWorker(QThread):
                         trim_right_left_img = 150   # left monitor
                         trim_top = 30               # both monitors
                         shift_right = 40            # right monitor
+                        trim_right_rimg = 400  # right monitor
+
                     
                     elif platform.system() == "Darwin":
                         trim_right = 300
-                        trim_bottom = 220
+                        trim_bottom = 300
                         trim_right_left_img = 230
                         trim_top = 50
                         shift_right = 230
@@ -389,6 +409,7 @@ class DetectionWorker(QThread):
                         (w // 2 - shift_right) : (w - trim_right - shift_right),
                         :
                     ]
+
 
                     #  Resize for model 
                     m32 = lambda v: ((v + 31) // 32) * 32
