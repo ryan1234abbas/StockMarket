@@ -48,204 +48,287 @@ class DetectionWorker(QThread):
         self.buy_cooldown = 6   
         self.sell_cooldown = 6 
 
+import sys
+import time
+import numpy as np
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import QThread, pyqtSignal
+from ultralytics import YOLO
+import mss
+import cv2
+import os
+import pyautogui
+import platform
+from collections import deque
+from datetime import date, datetime
+
+class DetectionWorker(QThread):
+    update_left = pyqtSignal(np.ndarray, list)
+    update_right = pyqtSignal(np.ndarray, list)
+    finished = pyqtSignal()
+
+    def __init__(self, model, offset_x, offset_y, width, height, total_frames):
+        super().__init__()
+        self.model = model
+        self.offset_x = offset_x
+        self.offset_y = offset_y
+        self.width = width
+        self.height = height
+        self.total_frames = total_frames
+        self.frame_count = 0
+        self.running = True
+        self.prev_box_dims = None
+        self.prev_trade_signal = None
+        self.counter = 0
+        self.buy_count = 0
+        self.sell_count = 0
+        self.prev_lbl_3020 = None
+        self.prev_lbl_1510 = None
+        self.last_trade_time = 0
+        self.cached_buy_btn = None
+        self.cached_sell_btn = None
+        self.last_buy_time = 0
+        self.last_sell_time = 0
+        self.curr_1510 = None
+        self.curr_box_1510 = None
+        self.last_triggered_box = None
+        self.pending_srl_trade = None
+        self.mode = mode
+
+        # change based on speed of market
+        # change based on desired buy/sell frequency
+        self.buy_cooldown = 6
+        self.sell_cooldown = 6
+
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
-                        right_img, boxes_1510, labels_1510, scores_1510,
-                        mode, candle_boxes=None, candle_labels=None, threshold=0.93, right_sz=640):
+            right_img, boxes_1510, labels_1510, scores_1510,
+            mode, candle_boxes=None, candle_labels=None,
+            threshold=0.93, right_sz=640):
 
-        import time, os, cv2, pyautogui
+        decision = None
+        current_time = time.time()
+        valid_labels = {"LH", "HL", "HH", "LL"}
 
-        if candle_boxes is None:
-            candle_boxes = []
-        if candle_labels is None:
-            candle_labels = []
+        # --- Helper: get top 2 rightmost labels ---
+        def get_two_rightmost(boxes, labels, scores, min_conf=0.30):
+            if not boxes or not labels or not scores:
+                return None, None
+            entries = [
+                (lbl, box, score)
+                for box, lbl, score in zip(boxes, labels, scores)
+                if score >= min_conf and lbl in valid_labels
+            ]
+            if not entries:
+                return None, None
+            entries.sort(key=lambda x: x[1][0], reverse=True)
+            first = entries[0]
+            second = entries[1] if len(entries) > 1 else (None, None, None)
+            return first, second
 
-        # --- Initialize sticky vars ---
-        if not hasattr(self, 'curr_1510'):
-            self.curr_1510 = None
-        if not hasattr(self, 'curr_box_1510'):
-            self.curr_box_1510 = None
-        if not hasattr(self, 'pending_trade_executed'):
-            self.pending_trade_executed = False
-        if not hasattr(self, 'last_3020_pattern'):
-            self.last_3020_pattern = None
-
-        # --- Get rightmost labels ---
+        # Get rightmost for 3020
         rightmost_lbl_3020, box_3020, score_3020 = self.get_rightmost_label(
-            boxes_3020, labels_3020, scores_3020, min_conf=0.30)
-        rightmost_lbl_1510, box_1510, score_1510 = self.get_rightmost_label(
-            boxes_1510, labels_1510, scores_1510, min_conf=0.30)
-        current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
+            boxes_3020, labels_3020, scores_3020, min_conf=0.30
+        )
+        if rightmost_lbl_3020 not in valid_labels:
+            rightmost_lbl_3020, box_3020, score_3020 = None, None, None
 
-        # --- HL/LH boxes ---
-        hl_boxes = [b for b, l in zip(boxes_1510, labels_1510) if l == "HL"]
-        lh_boxes = [b for b, l in zip(boxes_1510, labels_1510) if l == "LH"]
-        rightmost_hl = max(hl_boxes, key=lambda b: b[0]) if hl_boxes else None
-        rightmost_lh = max(lh_boxes, key=lambda b: b[0]) if lh_boxes else None
+        # Get rightmost and second-rightmost for 1510
+        first_1510, second_1510 = get_two_rightmost(
+            boxes_1510, labels_1510, scores_1510, min_conf=0.30
+        )
+        if first_1510:
+            rightmost_lbl_1510, box_1510, score_1510 = first_1510
+        else:
+            rightmost_lbl_1510, box_1510, score_1510 = None, None, None
+        if second_1510:
+            second_lbl_1510, box_second_1510, score_second_1510 = second_1510
+        else:
+            second_lbl_1510, box_second_1510, score_second_1510 = None, None, None
+
+        # Print detection info
+        conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 else "N/A"
+        conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 else "N/A"
+        conf_1510_second = f"{int(round(score_second_1510 * 100))}%" if score_second_1510 else "N/A"
+
+        print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}")
+        print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}, Box: {box_1510 or 'None'}")
+        print(f"1510 Second Label: {second_lbl_1510 or 'None'} with confidence {conf_1510_second}, Box: {box_second_1510 or 'None'}")
+
+        # --- Trade logic ---
+        def candle_center_within_box(label_box, candle_boxes):
+            """ Returns True if any candle's top center (cx_top) is within the horizontal range of the label box. """
+            if not label_box or not candle_boxes:
+                return False
+            lx0, ly0, lx1, ly1 = label_box
+            for cbox in candle_boxes:
+                cx0, cy0, cx1, cy1 = cbox
+                cx_top = (cx0 + cx1) // 2
+                if lx0 <= cx_top <= lx1:
+                    return True
+            return False
+
+        # Track current RML state
+        current_rml_1510 = rightmost_lbl_1510
         
+        # PRIMARY TRADE: Continuous check for candle with current RML
+        primary_trade_executed = False
+        
+        # BUY condition: 3020=HH and 1510=HL with candle above HL
+        if (
+            rightmost_lbl_3020 == "HH"
+            and rightmost_lbl_1510 == "HL"
+            and mode in ("buy", "both")
+            and current_time - self.last_buy_time >= self.buy_cooldown
+            and candle_center_within_box(box_1510, candle_boxes)
+        ):
+            self.last_buy_time = current_time
+            self.buy_count += 1
+            decision = "BUY"
+            primary_trade_executed = True
+            self.pending_srl_trade = None  # Clear any pending SRL trade
+            try:
+                buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
+                    'buy_sell/buy2.png', confidence=0.8)
+                if buy_btn:
+                    self.cached_buy_btn = buy_btn
+                    pyautogui.click(buy_btn)
+                print("BUY executed - HH + HL with candle above HL")
+            except pyautogui.ImageNotFoundException:
+                print("Buy button not found")
 
-        # Always assign rightmost detection (like first-time init)
-        if rightmost_lbl_1510 in ("HL", "LH"):
-            self.curr_1510 = rightmost_lbl_1510
-            self.curr_box_1510 = box_1510
-        print(f"Sticky label coord:{self.curr_box_1510}")
+        # SELL condition: 3020=LL and 1510=LH with candle below LH
+        elif (
+            rightmost_lbl_3020 == "LL"
+            and rightmost_lbl_1510 == "LH"
+            and mode in ("sell", "both")
+            and current_time - self.last_sell_time >= self.sell_cooldown
+            and candle_center_within_box(box_1510, candle_boxes)
+        ):
+            self.last_sell_time = current_time
+            self.sell_count += 1
+            decision = "SELL"
+            primary_trade_executed = True
+            self.pending_srl_trade = None  # Clear any pending SRL trade
+            try:
+                sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
+                    'buy_sell/sell2.png', confidence=0.8)
+                if sell_btn:
+                    self.cached_sell_btn = sell_btn
+                    pyautogui.click(sell_btn)
+                print("SELL executed - LL + LH with candle below LH")
+            except pyautogui.ImageNotFoundException:
+                print("Sell button not found")
 
-        conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 else "N/A" 
-        conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 else "N/A" 
-        print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}") 
-        print(f"1510 Label: {rightmost_lbl_1510 or 'None'} at {box_1510} with confidence {conf_1510}")
+        # CONTINUOUS CHECK: Update pending SRL trade when conditions are met but no candle
+        if not primary_trade_executed:
+            # BUY opportunity: 3020=HH and 1510=HL but no candle
+            if (
+                rightmost_lbl_3020 == "HH"
+                and rightmost_lbl_1510 == "HL"
+                and mode in ("buy", "both")
+                and current_time - self.last_buy_time >= self.buy_cooldown
+                and not candle_center_within_box(box_1510, candle_boxes)
+            ):
+                # Continuously update the pending trade while conditions hold
+                self.pending_srl_trade = ("BUY", "HL")
+                print("Pending SRL BUY trade - HH + HL but no candle alignment")
+            
+            # SELL opportunity: 3020=LL and 1510=LH but no candle  
+            elif (
+                rightmost_lbl_3020 == "LL"
+                and rightmost_lbl_1510 == "LH"
+                and mode in ("sell", "both")
+                and current_time - self.last_sell_time >= self.sell_cooldown
+                and not candle_center_within_box(box_1510, candle_boxes)
+            ):
+                # Continuously update the pending trade while conditions hold
+                self.pending_srl_trade = ("SELL", "LH")
+                print("Pending SRL SELL trade - LL + LH but no candle alignment")
+            
+            # # Clear pending trade if RML conditions no longer hold
+            # elif self.pending_srl_trade:
+            #     trade_type, expected_rml = self.pending_srl_trade
+            #     if (trade_type == "BUY" and (rightmost_lbl_3020 != "HH" or rightmost_lbl_1510 != "HL")) or \
+            #     (trade_type == "SELL" and (rightmost_lbl_3020 != "LL" or rightmost_lbl_1510 != "LH")):
+            #         self.pending_srl_trade = None
+            #         print("Cleared pending SRL trade - RML conditions no longer hold")
 
-        # Always update last 3020
-        self.last_3020_pattern = rightmost_lbl_3020
+        # SRL BACKUP TRADE: Execute when RML changes and SRL matches the pending trade
+        if (not primary_trade_executed and 
+            self.pending_srl_trade and 
+            rightmost_lbl_1510 != self.pending_srl_trade[1] and  # Current RML is DIFFERENT from the pending trade label
+            second_lbl_1510 == self.pending_srl_trade[1]):       # SRL matches the pending trade label
+            
+            trade_type, expected_srl = self.pending_srl_trade
+            
+            # BUY SRL trade
+            if (trade_type == "BUY" and 
+                rightmost_lbl_3020 == "HH" and  # Double-check RML 3020 still matches
+                mode in ("buy", "both") and
+                current_time - self.last_buy_time >= self.buy_cooldown):
+                
+                self.last_buy_time = current_time
+                self.buy_count += 1
+                decision = "BUY"
+                try:
+                    buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
+                        'buy_sell/buy2.png', confidence=0.8)
+                    if buy_btn:
+                        self.cached_buy_btn = buy_btn
+                        pyautogui.click(buy_btn)
+                    print(f"BUY executed - HH + SRL {expected_srl} (backup trade after RML changed)")
+                except pyautogui.ImageNotFoundException:
+                    print("Buy button not found")
+                finally:
+                    self.pending_srl_trade = None  # Clear pending trade
+            
+            # SELL SRL trade
+            elif (trade_type == "SELL" and 
+                rightmost_lbl_3020 == "LL" and  # Double-check RML 3020 still matches
+                mode in ("sell", "both") and
+                current_time - self.last_sell_time >= self.sell_cooldown):
+                
+                self.last_sell_time = current_time
+                self.sell_count += 1
+                decision = "SELL"
+                try:
+                    sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
+                        'buy_sell/sell2.png', confidence=0.8)
+                    if sell_btn:
+                        self.cached_sell_btn = sell_btn
+                        pyautogui.click(sell_btn)
+                    print(f"SELL executed - LL + SRL {expected_srl} (backup trade after RML changed)")
+                except pyautogui.ImageNotFoundException:
+                    print("Sell button not found")
+                finally:
+                    self.pending_srl_trade = None  # Clear pending trade
 
-        # --- Candle detection ---
-        results = self.model(source=right_img, verbose=False, stream=False, conf=0.20, iou=0.3, imgsz=640)
-        candle_boxes, candle_scores, candle_labels, _ = self.process_results(results)
-
-        candle_x0_x1 = []
-        rightmost_candle = max(candle_boxes, key=lambda b: b[0]) if candle_boxes else None
-        if rightmost_candle:
-            cx0, cy0, cx1, cy1 = rightmost_candle
-            # safe to use inside here
-        else:
-            cx0 = cy0 = cx1 = cy1 = None
-
-        candle_x0_x1.extend([cx0, cx1])
-    
-        if candle_boxes:
-            print(f"Rightmost candle box coords: {rightmost_candle}")
-        else:
-            print("No candles detected")
-
-        # --- Sync sticky box with candles ---
-        if self.curr_1510 in ("HL", "LH"):
-            matches = [cbox for cbox, clbl in zip(candle_boxes, candle_labels) if clbl == self.curr_1510]
-            if matches:
-                new_box = max(matches, key=lambda b: b[0])
-                if new_box != self.curr_box_1510:
-                    self.curr_box_1510 = new_box
-
-        # --- Debug drawing ---
+        # --- Debug visualization ---
         debug_3020, debug_1510 = left_img.copy(), right_img.copy()
+
         if box_3020:
             x0, y0, x1, y1 = box_3020
             cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
-            cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})", (x0, y0-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
-        if rightmost_lbl_1510 and box_1510:
+            cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})",
+                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+        if box_1510 and rightmost_lbl_1510:
             x0, y0, x1, y1 = box_1510
-            cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 255, 255), 4)
-            cv2.putText(debug_1510, f"RAW: {rightmost_lbl_1510} ({score_1510:.2f})", (x0, y0-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1)
-        if self.curr_box_1510:
-            x0, y0, x1, y1 = self.curr_box_1510
+            cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 255, 255), 2)
+            cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})",
+                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+        if box_second_1510 and second_lbl_1510:
+            x0, y0, x1, y1 = box_second_1510
             cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 2)
-            cv2.putText(debug_1510, f"STICKY: {self.curr_1510}", (x0, y0-25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,0,0), 2)
-        
-        # Draw all detected candles
-        for cbox, clbl in zip(candle_boxes, candle_labels):
-            if clbl == "candle": 
-                x0, y0, x1, y1 = cbox
-                cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 0, 255), 2)
-                 
+            cv2.putText(debug_1510, f"{second_lbl_1510} ({score_second_1510:.2f})",
+                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+
         os.makedirs("dummy", exist_ok=True)
         cv2.imwrite("dummy/debug_3020.png", debug_3020)
         cv2.imwrite("dummy/debug_1510.png", debug_1510)
 
-        # --- Trade helper ---
-        def has_black_candle(c_x0, c_x1, c_labels, target_box, label_type):
-            if not target_box:
-                return False
-            lx0, ly0, lx1, ly1 = target_box
-            center_x = (c_x0 + c_x1) // 2
-            if lx0 <= center_x <= lx1:
-                if label_type == "HL" and cy1 < ly0:
-                    return True
-                elif label_type == "LH" and cy0 > ly1:
-                    return True
-            return False
-
-        # --- Execute trades ---
-        def is_same_trade(box1, box2, tol=30):
-            if not box1 or not box2:
-                return False
-            return abs(box1[0]-box2[0]) <= tol
-
-        now = time.time()
-
-        def execute_buy(current_signal):
-            now = time.time()
-            if not is_same_trade(getattr(self, 'last_triggered_box', None), self.curr_box_1510) and \
-            now - getattr(self, 'last_buy_time', 0) >= self.buy_cooldown:
-
-                self.last_buy_time = now
-                self.buy_count += 1
-                self.prev_trade_signal = current_signal
-                self.last_triggered_box = self.curr_box_1510
-                self.pending_trade_executed = True
-
-                try:
-                    buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen('buy_sell/buy2.png', confidence=0.8)
-                    if buy_btn:
-                        self.cached_buy_btn = buy_btn
-                        pyautogui.click(buy_btn)
-                        print("BUY executed")
-                except pyautogui.ImageNotFoundException:
-                    print("Buy button not found")
-                return "BUY"
-            return None
-
-
-        def execute_sell(current_signal):
-            now = time.time()
-            if not is_same_trade(getattr(self, 'last_triggered_box', None), self.curr_box_1510) and \
-            now - getattr(self, 'last_sell_time', 0) >= self.sell_cooldown:
-
-                self.last_sell_time = now
-                self.sell_count += 1
-                self.prev_trade_signal = current_signal
-                self.last_triggered_box = self.curr_box_1510
-                self.pending_trade_executed = True
-
-                try:
-                    sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen('buy_sell/sell2.png', confidence=0.8)
-                    if sell_btn:
-                        self.cached_sell_btn = sell_btn
-                        pyautogui.click(sell_btn)
-                        print("SELL executed")
-                except pyautogui.ImageNotFoundException:
-                    print("Sell button not found")
-                return "SELL"
-            return None
-
-        # --- Determine triggers ---
-        trigger_buy = trigger_sell = False
-        if self.curr_1510 == "HL" and rightmost_lbl_3020 == "HH":
-            if self.curr_box_1510 and has_black_candle(candle_x0_x1[0], candle_x0_x1[1], rightmost_candle, self.curr_box_1510, "HL"):
-                trigger_buy = True
-        
-        elif self.curr_1510 == "LH" and rightmost_lbl_3020 == "LL":
-            if self.curr_box_1510 and has_black_candle(candle_x0_x1[0], candle_x0_x1[1], rightmost_candle, self.curr_box_1510, "LH"):
-                trigger_sell = True
-
-        # --- Execute trades ---
-        decision = None
-        if mode in ("buy", "both") and trigger_buy and not self.pending_trade_executed:
-            decision = execute_buy(current_signal)
-        elif mode in ("sell", "both") and trigger_sell and not self.pending_trade_executed:
-            decision = execute_sell(current_signal)
-
-        # --- Update sticky AFTER trade ---
-        matches = [cbox for cbox, clbl in zip(candle_boxes, candle_labels) if clbl == "candle"]
-        if matches:
-            self.curr_box_1510 = max(matches, key=lambda b: b[0])
-            self.curr_1510 = rightmost_lbl_1510 if rightmost_lbl_1510 in ("HL", "LH") else self.curr_1510
-        else:
-            self.curr_box_1510 = None
-            self.curr_1510 = None
-
         return decision
-
 
     def get_rightmost_label(self, boxes, labels, scores, min_conf=0.30):
             valid_labels = {"HH", "LL", "HL", "LH"}
@@ -433,11 +516,22 @@ class DetectionWorker(QThread):
                     keep_right = self.non_max_suppression_fast(right_boxes, right_scores, iou_thresh=0.5)
                     merged_right = self.merge_vertically_close_boxes([right_boxes[i] for i in keep_right])
                     merged_right_labels = [right_labels[i] for i in keep_right]
+                    
+                    candle_results = self.model.predict(
+                        source=right_img, verbose=False, stream=False, conf=0.2, iou=0.3, imgsz=right_sz
+                    )
+                    candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_results)
 
+                    # filter only candle class
+                    candle_boxes = [b for b, l in zip(candle_boxes, candle_labels) if l == "candle"]
+                    candle_labels = ["candle"] * len(candle_boxes)
+                    
                     decision = self.analyze_candles_tm(
                         left_img, merged_left, merged_left_labels, left_conf,
                         right_img, merged_right, merged_right_labels, right_conf,
-                        mode
+                        mode,
+                        candle_boxes=candle_boxes,
+                        candle_labels=candle_labels
                     )
 
                     if decision:
@@ -588,7 +682,7 @@ class MarketWorker:
             offset_y=self.offset_y,
             width=self.width,
             height=self.height,
-            total_frames=self.total_frames
+            total_frames=self.total_frames,
         )
         
         self.detection_thread.finished.connect(self.on_finished)
