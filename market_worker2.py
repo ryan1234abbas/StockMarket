@@ -29,56 +29,6 @@ class DetectionWorker(QThread):
         self.running = True
         self.prev_box_dims = None
         self.prev_trade_signal = None
-        self.counter = 0 
-        self.buy_count = 0 
-        self.sell_count = 0
-        self.prev_lbl_3020 = None
-        self.prev_lbl_1510 = None
-        self.last_trade_time = 0
-        self.cached_buy_btn = None
-        self.cached_sell_btn = None
-        self.last_buy_time = 0
-        self.last_sell_time = 0
-        self.curr_1510 = None
-        self.curr_box_1510 = None
-        self.last_triggered_box = None
-
-        #change based on speed of market
-        #change based on desired buy/sell frequency
-        self.buy_cooldown = 6   
-        self.sell_cooldown = 6 
-
-import sys
-import time
-import numpy as np
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QThread, pyqtSignal
-from ultralytics import YOLO
-import mss
-import cv2
-import os
-import pyautogui
-import platform
-from collections import deque
-from datetime import date, datetime
-
-class DetectionWorker(QThread):
-    update_left = pyqtSignal(np.ndarray, list)
-    update_right = pyqtSignal(np.ndarray, list)
-    finished = pyqtSignal()
-
-    def __init__(self, model, offset_x, offset_y, width, height, total_frames):
-        super().__init__()
-        self.model = model
-        self.offset_x = offset_x
-        self.offset_y = offset_y
-        self.width = width
-        self.height = height
-        self.total_frames = total_frames
-        self.frame_count = 0
-        self.running = True
-        self.prev_box_dims = None
-        self.prev_trade_signal = None
         self.counter = 0
         self.buy_count = 0
         self.sell_count = 0
@@ -245,14 +195,6 @@ class DetectionWorker(QThread):
                 self.pending_srl_trade = ("SELL", "LH")
                 print("Pending SRL SELL trade - LL + LH but no candle alignment")
             
-            # # Clear pending trade if RML conditions no longer hold
-            # elif self.pending_srl_trade:
-            #     trade_type, expected_rml = self.pending_srl_trade
-            #     if (trade_type == "BUY" and (rightmost_lbl_3020 != "HH" or rightmost_lbl_1510 != "HL")) or \
-            #     (trade_type == "SELL" and (rightmost_lbl_3020 != "LL" or rightmost_lbl_1510 != "LH")):
-            #         self.pending_srl_trade = None
-            #         print("Cleared pending SRL trade - RML conditions no longer hold")
-
         # SRL BACKUP TRADE: Execute when RML changes and SRL matches the pending trade
         if (not primary_trade_executed and 
             self.pending_srl_trade and 
