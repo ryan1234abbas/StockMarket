@@ -11,6 +11,12 @@ import pyautogui
 import platform
 from collections import deque
 from datetime import date, datetime
+import torch
+
+# GPU configuration
+device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+print(f"Using device: {device}")
+
 
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
@@ -103,19 +109,26 @@ class DetectionWorker(QThread):
         print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}")
         print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}, Box: {box_1510 or 'None'}")
         print(f"1510 Second Label: {second_lbl_1510 or 'None'} with confidence {conf_1510_second}, Box: {box_second_1510 or 'None'}")
-
+        if candle_boxes:
+            rightmost_candle = max(candle_boxes, key=lambda b: b[2])  # Find by rightmost x (b[2])
+            print(f"Rightmost Candle Box: {rightmost_candle}")
+        else:
+            print("Rightmost Candle: None")
+            
         # --- Trade logic ---
         def candle_center_within_box(label_box, candle_boxes):
-            """ Returns True if any candle's top center (cx_top) is within the horizontal range of the label box. """
+            """ Returns True if the rightmost candle's center is within the horizontal range of the label box. """
             if not label_box or not candle_boxes:
                 return False
+            
+            # Get the rightmost candle
+            rightmost_candle = max(candle_boxes, key=lambda b: b[2])
+            
             lx0, ly0, lx1, ly1 = label_box
-            for cbox in candle_boxes:
-                cx0, cy0, cx1, cy1 = cbox
-                cx_top = (cx0 + cx1) // 2
-                if lx0 <= cx_top <= lx1:
-                    return True
-            return False
+            cx0, cy0, cx1, cy1 = rightmost_candle
+            cx_center = (cx0 + cx1) // 2
+            
+            return lx0 <= cx_center <= lx1
 
         # Track current RML state
         current_rml_1510 = rightmost_lbl_1510
@@ -265,7 +278,20 @@ class DetectionWorker(QThread):
             cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 2)
             cv2.putText(debug_1510, f"{second_lbl_1510} ({score_second_1510:.2f})",
                         (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-
+        
+        if candle_boxes:
+            rightmost_candle = max(candle_boxes, key=lambda b: b[2])
+            rightmost_x2 = rightmost_candle[2]  # Get the rightmost x coordinate
+            
+            for cbox in candle_boxes:
+                cx0, cy0, cx1, cy1 = cbox
+                # Draw all candles in red
+                cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 0, 255), 2)
+                
+                # Highlight rightmost candle in purple - compare by x2 coordinate
+                if cx1 == rightmost_x2:
+                    cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 0, 255), 3)
+                    
         os.makedirs("dummy", exist_ok=True)
         cv2.imwrite("dummy/debug_3020.png", debug_3020)
         cv2.imwrite("dummy/debug_1510.png", debug_1510)
@@ -290,8 +316,6 @@ class DetectionWorker(QThread):
             # Pick the rightmost among valid ones
             box, label, score = max(filtered, key=lambda x: x[0][0])  # x[0][0] = leftmost x coord
             return label, box, score
-
-
 
     def run(self):
 
@@ -435,17 +459,27 @@ class DetectionWorker(QThread):
                         :
                     ]
 
-
                     #  Resize for model 
                     m32 = lambda v: ((v + 31) // 32) * 32
                     left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
                     right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
 
                     # Model predictions 
-                    left_results = self.model.predict(
-                        source=left_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=left_sz)
-                    right_results = self.model.predict(
-                        source=right_img, verbose=False, stream=False, conf=0.01, iou=0.15, imgsz=right_sz)
+                    combined_images = [left_img, right_img]
+                    all_results = self.model.predict(
+                        source=combined_images,
+                        verbose=False,
+                        stream=False, 
+                        conf=0.01,  # Use lower confidence, filter candles later
+                        iou=0.15,
+                        imgsz=640,
+                        device=device
+                    )
+
+                    # Split results
+                    left_results = [all_results[0]]        # First image = left_img
+                    right_results = [all_results[1]]       # Second image = right_img
+                    candle_results = [all_results[1]]      # Reuse right_img results for candles
 
                     # Process results 
                     left_boxes, left_scores, left_labels, left_conf = self.process_results(left_results)
@@ -459,15 +493,11 @@ class DetectionWorker(QThread):
                     merged_right = self.merge_vertically_close_boxes([right_boxes[i] for i in keep_right])
                     merged_right_labels = [right_labels[i] for i in keep_right]
                     
-                    candle_results = self.model.predict(
-                        source=right_img, verbose=False, stream=False, conf=0.2, iou=0.3, imgsz=right_sz
-                    )
+                    #process candle results
                     candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_results)
+                    candle_boxes = [b for i, (b, l) in enumerate(zip(candle_boxes, candle_labels)) 
+                if l == "candle" and candle_scores[i] >= 0.1]
 
-                    # filter only candle class
-                    candle_boxes = [b for b, l in zip(candle_boxes, candle_labels) if l == "candle"]
-                    candle_labels = ["candle"] * len(candle_boxes)
-                    
                     decision = self.analyze_candles_tm(
                         left_img, merged_left, merged_left_labels, left_conf,
                         right_img, merged_right, merged_right_labels, right_conf,
