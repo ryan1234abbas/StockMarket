@@ -57,8 +57,8 @@ class DetectionWorker(QThread):
 
         # change based on speed of market
         # change based on desired buy/sell frequency
-        self.buy_cooldown = 6
-        self.sell_cooldown = 6
+        self.buy_cooldown = 5
+        self.sell_cooldown = 5
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
                 right_img, boxes_1510, labels_1510, scores_1510,
