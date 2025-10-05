@@ -50,6 +50,10 @@ class DetectionWorker(QThread):
         self.last_triggered_box = None
         self.pending_srl_trade = None
         self.mode = mode
+        self.prev_rml_1510 = None
+        self.prev_srl_1510 = None
+        self.last_rml_1510_x = None
+        self.srl_lockout_after_trade = False
 
         # change based on speed of market
         # change based on desired buy/sell frequency
@@ -57,246 +61,302 @@ class DetectionWorker(QThread):
         self.sell_cooldown = 6
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
-            right_img, boxes_1510, labels_1510, scores_1510,
-            mode, candle_boxes=None, candle_labels=None,
-            threshold=0.93, right_sz=640):
+                right_img, boxes_1510, labels_1510, scores_1510,
+                mode, candle_boxes=None, candle_labels=None,
+                threshold=0.93, right_sz=640):
 
-        decision = None
-        current_time = time.time()
-        valid_labels = {"LH", "HL", "HH", "LL"}
+            decision = None
+            current_time = time.time()
+            valid_labels = {"LH", "HL", "HH", "LL"}
 
-        # --- Helper: get top 2 rightmost labels ---
-        def get_two_rightmost(boxes, labels, scores, min_conf=0.30):
-            if not boxes or not labels or not scores:
-                return None, None
-            entries = [
-                (lbl, box, score)
-                for box, lbl, score in zip(boxes, labels, scores)
-                if score >= min_conf and lbl in valid_labels
-            ]
-            if not entries:
-                return None, None
-            entries.sort(key=lambda x: x[1][0], reverse=True)
-            first = entries[0]
-            second = entries[1] if len(entries) > 1 else (None, None, None)
-            return first, second
+            # --- Helper: get top 2 rightmost labels ---
+            def get_two_rightmost(boxes, labels, scores, min_conf=0.30):
+                if not boxes or not labels or not scores:
+                    return None, None
+                entries = [
+                    (lbl, box, score)
+                    for box, lbl, score in zip(boxes, labels, scores)
+                    if score >= min_conf and lbl in valid_labels
+                ]
+                if not entries:
+                    return None, None
+                entries.sort(key=lambda x: x[1][0], reverse=True)
+                first = entries[0]
+                second = entries[1] if len(entries) > 1 else (None, None, None)
+                return first, second
 
-        # Get rightmost for 3020
-        rightmost_lbl_3020, box_3020, score_3020 = self.get_rightmost_label(
-            boxes_3020, labels_3020, scores_3020, min_conf=0.30
-        )
-        if rightmost_lbl_3020 not in valid_labels:
-            rightmost_lbl_3020, box_3020, score_3020 = None, None, None
+            # Get rightmost for 3020
+            rightmost_lbl_3020, box_3020, score_3020 = self.get_rightmost_label(
+                boxes_3020, labels_3020, scores_3020, min_conf=0.30
+            )
+            if rightmost_lbl_3020 not in valid_labels:
+                rightmost_lbl_3020, box_3020, score_3020 = None, None, None
 
-        # Get rightmost and second-rightmost for 1510
-        first_1510, second_1510 = get_two_rightmost(
-            boxes_1510, labels_1510, scores_1510, min_conf=0.30
-        )
-        if first_1510:
-            rightmost_lbl_1510, box_1510, score_1510 = first_1510
-        else:
-            rightmost_lbl_1510, box_1510, score_1510 = None, None, None
-        if second_1510:
-            second_lbl_1510, box_second_1510, score_second_1510 = second_1510
-        else:
-            second_lbl_1510, box_second_1510, score_second_1510 = None, None, None
+            # Get rightmost and second-rightmost for 1510
+            first_1510, second_1510 = get_two_rightmost(
+                boxes_1510, labels_1510, scores_1510, min_conf=0.30
+            )
+            if first_1510:
+                rightmost_lbl_1510, box_1510, score_1510 = first_1510
+                current_rml_x = box_1510[0]  # x0 coordinate of current RML
+            else:
+                rightmost_lbl_1510, box_1510, score_1510 = None, None, None
+                current_rml_x = None
+                
+            if second_1510:
+                second_lbl_1510, box_second_1510, score_second_1510 = second_1510
+            else:
+                second_lbl_1510, box_second_1510, score_second_1510 = None, None, None
 
-        # Print detection info
-        conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 else "N/A"
-        conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 else "N/A"
-        conf_1510_second = f"{int(round(score_second_1510 * 100))}%" if score_second_1510 else "N/A"
-
-        print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}")
-        print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}, Box: {box_1510 or 'None'}")
-        print(f"1510 Second Label: {second_lbl_1510 or 'None'} with confidence {conf_1510_second}, Box: {box_second_1510 or 'None'}")
-        if candle_boxes:
-            rightmost_candle = max(candle_boxes, key=lambda b: b[2])  # Find by rightmost x (b[2])
-            print(f"Rightmost Candle Box: {rightmost_candle}")
-        else:
-            print("Rightmost Candle: None")
+            # Check if RML1510 has moved backwards (reassigned to label with lower x value)
+            rml_moved_backwards = False
+            if (current_rml_x is not None and 
+                hasattr(self, 'last_rml_1510_x') and 
+                self.last_rml_1510_x is not None and
+                current_rml_x < self.last_rml_1510_x):
+                
+                rml_moved_backwards = True
+                print(f"RML1510 moved backwards: {self.last_rml_1510_x} -> {current_rml_x}. Ignoring RML until normal.")
             
-        # --- Trade logic ---
-        def candle_center_within_box(label_box, candle_boxes):
-            """ Returns True if the rightmost candle's center is within the horizontal range of the label box. """
-            if not label_box or not candle_boxes:
-                return False
+            # Update the last known RML x position
+            if current_rml_x is not None:
+                self.last_rml_1510_x = current_rml_x
             
-            # Get the rightmost candle
-            rightmost_candle = max(candle_boxes, key=lambda b: b[2])
+
+            # Check if RML1510 has moved backwards (reassigned to label with lower x value)
+            rml_moved_backwards = False
+            if (current_rml_x is not None and 
+                hasattr(self, 'last_rml_1510_x') and 
+                self.last_rml_1510_x is not None and
+                current_rml_x < self.last_rml_1510_x):
+                
+                rml_moved_backwards = True
+                print(f"RML1510 moved backwards: {self.last_rml_1510_x} -> {current_rml_x}. Ignoring RML until normal.")
+
+            # ADD THIS NEW CHECK FOR LARGE BACKWARD JUMPS:
+            elif (current_rml_x is not None and 
+                hasattr(self, 'last_rml_1510_x') and 
+                self.last_rml_1510_x is not None and
+                (self.last_rml_1510_x - current_rml_x) > 100):  # If it jumped backwards more than 100px
+                
+                rml_moved_backwards = True
+                print(f"RML1510 large backward jump detected: {self.last_rml_1510_x} -> {current_rml_x}. Ignoring trades.")
+
+            # 🔓 RESET SRL LOCKOUT AFTER COOLDOWN PERIOD
+            current_rml_1510 = rightmost_lbl_1510
+            if (current_rml_1510 != self.prev_rml_1510 and not rml_moved_backwards):
+                self.srl_lockout_after_trade = False  # 🔓 UNLOCK SRL TRADES on ANY RML change
+                print("SRL lockout reset - RML changed")
+                
+            # Print detection info
+            conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 else "N/A"
+            conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 else "N/A"
+            conf_1510_second = f"{int(round(score_second_1510 * 100))}%" if score_second_1510 else "N/A"
+
+            print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}")
+            print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}, Box: {box_1510 or 'None'}")
+            print(f"1510 Second Label: {second_lbl_1510 or 'None'} with confidence {conf_1510_second}, Box: {box_second_1510 or 'None'}")
+            print(f"SRL Lockout: {self.srl_lockout_after_trade}")
             
-            lx0, ly0, lx1, ly1 = label_box
-            cx0, cy0, cx1, cy1 = rightmost_candle
-            cx_center = (cx0 + cx1) // 2
+            if candle_boxes:
+                rightmost_candle = max(candle_boxes, key=lambda b: b[2])  # Find by rightmost x (b[2])
+                print(f"Rightmost Candle Box: {rightmost_candle}")
+            else:
+                print("Rightmost Candle: None")
+                
+            # --- Trade logic ---
+            def candle_center_within_box(label_box, candle_boxes):
+                """ Returns True if the rightmost candle's center is within the horizontal range of the label box. """
+                if not label_box or not candle_boxes:
+                    return False
+                
+                # Get the rightmost candle
+                rightmost_candle = max(candle_boxes, key=lambda b: b[2])
+                
+                lx0, ly0, lx1, ly1 = label_box
+                cx0, cy0, cx1, cy1 = rightmost_candle
+                cx_center = (cx0 + cx1) // 2
+                
+                return lx0 <= cx_center+1000 <= lx1
+
+            # PRIMARY TRADE: Continuous check for candle with current RML
+            primary_trade_executed = False
             
-            return lx0 <= cx_center <= lx1
-
-        # Track current RML state
-        current_rml_1510 = rightmost_lbl_1510
-        
-        # PRIMARY TRADE: Continuous check for candle with current RML
-        primary_trade_executed = False
-        
-        # BUY condition: 3020=HH and 1510=HL with candle above HL
-        if (
-            rightmost_lbl_3020 == "HH"
-            and rightmost_lbl_1510 == "HL"
-            and mode in ("buy", "both")
-            and current_time - self.last_buy_time >= self.buy_cooldown
-            and candle_center_within_box(box_1510, candle_boxes)
-        ):
-            self.last_buy_time = current_time
-            self.buy_count += 1
-            decision = "BUY"
-            primary_trade_executed = True
-            self.pending_srl_trade = None  # Clear any pending SRL trade
-            try:
-                buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
-                    'buy_sell/buy2.png', confidence=0.8)
-                if buy_btn:
-                    self.cached_buy_btn = buy_btn
-                    pyautogui.click(buy_btn)
-                print("BUY executed - HH + HL with candle above HL")
-            except pyautogui.ImageNotFoundException:
-                print("Buy button not found")
-
-        # SELL condition: 3020=LL and 1510=LH with candle below LH
-        elif (
-            rightmost_lbl_3020 == "LL"
-            and rightmost_lbl_1510 == "LH"
-            and mode in ("sell", "both")
-            and current_time - self.last_sell_time >= self.sell_cooldown
-            and candle_center_within_box(box_1510, candle_boxes)
-        ):
-            self.last_sell_time = current_time
-            self.sell_count += 1
-            decision = "SELL"
-            primary_trade_executed = True
-            self.pending_srl_trade = None  # Clear any pending SRL trade
-            try:
-                sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
-                    'buy_sell/sell2.png', confidence=0.8)
-                if sell_btn:
-                    self.cached_sell_btn = sell_btn
-                    pyautogui.click(sell_btn)
-                print("SELL executed - LL + LH with candle below LH")
-            except pyautogui.ImageNotFoundException:
-                print("Sell button not found")
-
-        # CONTINUOUS CHECK: Update pending SRL trade when conditions are met but no candle
-        if not primary_trade_executed:
-            # BUY opportunity: 3020=HH and 1510=HL but no candle
+            # BUY condition: 3020=HH and 1510=HL with candle above HL
             if (
+                not rml_moved_backwards and  # Only proceed if RML hasn't moved backwards
                 rightmost_lbl_3020 == "HH"
                 and rightmost_lbl_1510 == "HL"
                 and mode in ("buy", "both")
                 and current_time - self.last_buy_time >= self.buy_cooldown
-                and not candle_center_within_box(box_1510, candle_boxes)
+                and candle_center_within_box(box_1510, candle_boxes)
             ):
-                # Continuously update the pending trade while conditions hold
-                self.pending_srl_trade = ("BUY", "HL")
-                print("Pending SRL BUY trade - HH + HL but no candle alignment")
-            
-            # SELL opportunity: 3020=LL and 1510=LH but no candle  
-            elif (
-                rightmost_lbl_3020 == "LL"
-                and rightmost_lbl_1510 == "LH"
-                and mode in ("sell", "both")
-                and current_time - self.last_sell_time >= self.sell_cooldown
-                and not candle_center_within_box(box_1510, candle_boxes)
-            ):
-                # Continuously update the pending trade while conditions hold
-                self.pending_srl_trade = ("SELL", "LH")
-                print("Pending SRL SELL trade - LL + LH but no candle alignment")
-            
-        # SRL BACKUP TRADE: Execute when RML changes and SRL matches the pending trade
-        if (not primary_trade_executed and 
-            self.pending_srl_trade and 
-            rightmost_lbl_1510 != self.pending_srl_trade[1] and  # Current RML is DIFFERENT from the pending trade label
-            second_lbl_1510 == self.pending_srl_trade[1]):       # SRL matches the pending trade label
-            
-            trade_type, expected_srl = self.pending_srl_trade
-            
-            # BUY SRL trade
-            if (trade_type == "BUY" and 
-                rightmost_lbl_3020 == "HH" and  # Double-check RML 3020 still matches
-                mode in ("buy", "both") and
-                current_time - self.last_buy_time >= self.buy_cooldown):
-                
                 self.last_buy_time = current_time
                 self.buy_count += 1
                 decision = "BUY"
+                primary_trade_executed = True
+                self.srl_lockout_after_trade = True
+                self.pending_srl_trade = None  
                 try:
                     buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
                         'buy_sell/buy2.png', confidence=0.8)
                     if buy_btn:
                         self.cached_buy_btn = buy_btn
                         pyautogui.click(buy_btn)
-                    print(f"BUY executed - HH + SRL {expected_srl} (backup trade after RML changed)")
+                    print("BUY executed - HH + HL with candle above HL")
                 except pyautogui.ImageNotFoundException:
                     print("Buy button not found")
-                finally:
-                    self.pending_srl_trade = None  # Clear pending trade
-            
-            # SELL SRL trade
-            elif (trade_type == "SELL" and 
-                rightmost_lbl_3020 == "LL" and  # Double-check RML 3020 still matches
-                mode in ("sell", "both") and
-                current_time - self.last_sell_time >= self.sell_cooldown):
-                
+
+            # SELL condition: 3020=LL and 1510=LH with candle below LH
+            elif (
+                not rml_moved_backwards and  # Only proceed if RML hasn't moved backwards
+                rightmost_lbl_3020 == "LL"
+                and rightmost_lbl_1510 == "LH"
+                and mode in ("sell", "both")
+                and current_time - self.last_sell_time >= self.sell_cooldown
+                and candle_center_within_box(box_1510, candle_boxes)
+            ):
                 self.last_sell_time = current_time
                 self.sell_count += 1
                 decision = "SELL"
+                primary_trade_executed = True
+                self.srl_lockout_after_trade = True
+                self.pending_srl_trade = None  # Clear any pending SRL trade
                 try:
                     sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
                         'buy_sell/sell2.png', confidence=0.8)
                     if sell_btn:
                         self.cached_sell_btn = sell_btn
                         pyautogui.click(sell_btn)
-                    print(f"SELL executed - LL + SRL {expected_srl} (backup trade after RML changed)")
+                    print("SELL executed - LL + LH with candle below LH")
                 except pyautogui.ImageNotFoundException:
                     print("Sell button not found")
-                finally:
-                    self.pending_srl_trade = None  # Clear pending trade
 
-        # --- Debug visualization ---
-        debug_3020, debug_1510 = left_img.copy(), right_img.copy()
-
-        if box_3020:
-            x0, y0, x1, y1 = box_3020
-            cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
-            cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})",
-                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-        if box_1510 and rightmost_lbl_1510:
-            x0, y0, x1, y1 = box_1510
-            cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 255, 255), 2)
-            cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})",
-                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-
-        if box_second_1510 and second_lbl_1510:
-            x0, y0, x1, y1 = box_second_1510
-            cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 2)
-            cv2.putText(debug_1510, f"{second_lbl_1510} ({score_second_1510:.2f})",
-                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-        
-        if candle_boxes:
-            rightmost_candle = max(candle_boxes, key=lambda b: b[2])
-            rightmost_x2 = rightmost_candle[2]  # Get the rightmost x coordinate
-            
-            for cbox in candle_boxes:
-                cx0, cy0, cx1, cy1 = cbox
-                # Draw all candles in red
-                cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 0, 255), 2)
+            # CONTINUOUS CHECK: Update pending SRL trade when conditions are met but no candle
+            if not primary_trade_executed and not rml_moved_backwards:
+                # BUY opportunity: 3020=HH and 1510=HL but no candle
+                if (
+                    rightmost_lbl_3020 == "HH"
+                    and rightmost_lbl_1510 == "HL"
+                    and mode in ("buy", "both")
+                    and current_time - self.last_buy_time >= self.buy_cooldown
+                    and not candle_center_within_box(box_1510, candle_boxes)
+                ):
+                    # Continuously update the pending trade while conditions hold
+                    self.pending_srl_trade = ("BUY", "HL")
+                    print("Pending SRL BUY trade - HH + HL but no candle alignment")
                 
-                # Highlight rightmost candle in purple - compare by x2 coordinate
-                if cx1 == rightmost_x2:
-                    cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 0, 255), 3)
-                    
-        os.makedirs("dummy", exist_ok=True)
-        cv2.imwrite("dummy/debug_3020.png", debug_3020)
-        cv2.imwrite("dummy/debug_1510.png", debug_1510)
+                # SELL opportunity: 3020=LL and 1510=LH but no candle  
+                elif (
+                    rightmost_lbl_3020 == "LL"
+                    and rightmost_lbl_1510 == "LH"
+                    and mode in ("sell", "both")
+                    and current_time - self.last_sell_time >= self.sell_cooldown
+                    and not candle_center_within_box(box_1510, candle_boxes)
+                ):
+                    # Continuously update the pending trade while conditions hold
+                    self.pending_srl_trade = ("SELL", "LH")
+                    print("Pending SRL SELL trade - LL + LH but no candle alignment")
+                
+            # SRL BACKUP TRADE: Execute when RML changes and SRL matches the pending trade
+            current_srl_1510 = second_lbl_1510
 
-        return decision
+            # Check if both RML and SRL changed to new patterns (only if RML hasn't moved backwards)
+            # AND SRL lockout is not active
+            if (not rml_moved_backwards and not self.srl_lockout_after_trade and
+                current_rml_1510 != self.prev_rml_1510 and 
+                current_srl_1510 != self.prev_srl_1510 and
+                current_rml_1510 and current_srl_1510):  # Both are valid
+                
+                # Update tracking
+                self.prev_rml_1510 = current_rml_1510
+                self.prev_srl_1510 = current_srl_1510
+                
+                # Check SRL trade conditions
+                if (current_srl_1510 == "HL" and 
+                    rightmost_lbl_3020 == "HH" and 
+                    mode in ("buy", "both") and
+                    current_time - self.last_buy_time >= self.buy_cooldown):
+                    
+                    # Execute BUY
+                    self.last_buy_time = current_time
+                    self.buy_count += 1
+                    decision = "BUY"
+                    self.srl_lockout_after_trade = True  # 🔒 LOCK SRL TRADES after SRL trade
+                    try:
+                        buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
+                            'buy_sell/buy2.png', confidence=0.8)
+                        if buy_btn:
+                            self.cached_buy_btn = buy_btn
+                            pyautogui.click(buy_btn)
+                        print(f"BUY executed - HH + SRL {current_srl_1510} (both labels changed)")
+                    except pyautogui.ImageNotFoundException:
+                        print("Buy button not found")
+                
+                elif (current_srl_1510 == "LH" and 
+                    rightmost_lbl_3020 == "LL" and 
+                    mode in ("sell", "both") and
+                    current_time - self.last_sell_time >= self.sell_cooldown):
+                    
+                    # Execute SELL
+                    self.last_sell_time = current_time
+                    self.sell_count += 1
+                    decision = "SELL"
+                    self.srl_lockout_after_trade = True  # 🔒 LOCK SRL TRADES after SRL trade
+                    try:
+                        sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
+                            'buy_sell/sell2.png', confidence=0.8)
+                        if sell_btn:
+                            self.cached_sell_btn = sell_btn
+                            pyautogui.click(sell_btn)
+                        print(f"SELL executed - LL + SRL {current_srl_1510} (both labels changed)")
+                    except pyautogui.ImageNotFoundException:
+                        print("Sell button not found")
+
+            # If only RML changed but SRL stayed same → ignore (just maturing)
+            elif current_rml_1510 != self.prev_rml_1510 and not rml_moved_backwards:
+                self.prev_rml_1510 = current_rml_1510
+                
+                
+            # --- Debug visualization ---
+            debug_3020, debug_1510 = left_img.copy(), right_img.copy()
+
+            if box_3020:
+                x0, y0, x1, y1 = box_3020
+                cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
+                cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})",
+                            (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+            if box_1510 and rightmost_lbl_1510:
+                x0, y0, x1, y1 = box_1510
+                cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 255, 255), 2)
+                cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})",
+                            (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+            if box_second_1510 and second_lbl_1510:
+                x0, y0, x1, y1 = box_second_1510
+                cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 2)
+                cv2.putText(debug_1510, f"{second_lbl_1510} ({score_second_1510:.2f})",
+                            (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+            
+            if candle_boxes:
+                rightmost_candle = max(candle_boxes, key=lambda b: b[2])
+                rightmost_x2 = rightmost_candle[2]  # Get the rightmost x coordinate
+                
+                for cbox in candle_boxes:
+                    cx0, cy0, cx1, cy1 = cbox
+                    # Draw all candles in red
+                    cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 0, 255), 2)
+                    
+                    # Highlight rightmost candle in purple - compare by x2 coordinate
+                    if cx1 == rightmost_x2:
+                        cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 0, 255), 3)
+                        
+            os.makedirs("dummy", exist_ok=True)
+            cv2.imwrite("dummy/debug_3020.png", debug_3020)
+            cv2.imwrite("dummy/debug_1510.png", debug_1510)
+
+            return decision
 
     def get_rightmost_label(self, boxes, labels, scores, min_conf=0.30):
             valid_labels = {"HH", "LL", "HL", "LH"}
