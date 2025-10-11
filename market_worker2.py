@@ -199,7 +199,7 @@ class DetectionWorker(QThread):
                 self.pending_srl_trade = None  
                 try:
                     buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
-                        'buy_sell/buy2.png', confidence=0.8)
+                        'buy_sell/Buybutton3.png', confidence=0.8)
                     if buy_btn:
                         self.cached_buy_btn = buy_btn
                         pyautogui.click(buy_btn)
@@ -224,7 +224,7 @@ class DetectionWorker(QThread):
                 self.pending_srl_trade = None  # Clear any pending SRL trade
                 try:
                     sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
-                        'buy_sell/sell2.png', confidence=0.8)
+                        'buy_sell/Sellbutton3.png', confidence=0.8)
                     if sell_btn:
                         self.cached_sell_btn = sell_btn
                         pyautogui.click(sell_btn)
@@ -285,7 +285,7 @@ class DetectionWorker(QThread):
                     self.srl_lockout_after_trade = True  # 🔒 LOCK SRL TRADES after SRL trade
                     try:
                         buy_btn = self.cached_buy_btn or pyautogui.locateCenterOnScreen(
-                            'buy_sell/buy2.png', confidence=0.8)
+                            'buy_sell/Buybutton3.png', confidence=0.8)
                         if buy_btn:
                             self.cached_buy_btn = buy_btn
                             pyautogui.click(buy_btn)
@@ -305,7 +305,7 @@ class DetectionWorker(QThread):
                     self.srl_lockout_after_trade = True  # 🔒 LOCK SRL TRADES after SRL trade
                     try:
                         sell_btn = self.cached_sell_btn or pyautogui.locateCenterOnScreen(
-                            'buy_sell/sell2.png', confidence=0.8)
+                            'buy_sell/Sellbutton3.png', confidence=0.8)
                         if sell_btn:
                             self.cached_sell_btn = sell_btn
                             pyautogui.click(sell_btn)
@@ -492,8 +492,8 @@ class DetectionWorker(QThread):
                     }
                     
                     if platform.system() == "Windows":
-                        trim_right = 255            # right monitor
-                        trim_bottom = 80            # both monitors
+                        trim_right = 285            # right monitor
+                        trim_bottom = 130            # both monitors
                         trim_right_left_img = 150   # left monitor
                         trim_top = 30               # both monitors
                         shift_right = 40            # right monitor
@@ -693,13 +693,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):      
         #Ryan's Laptop
-        self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
+       # self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
 
         #AP's Laptop
         # self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
 
         # AP's main machine
-        #self.model = YOLO("C:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/detect2/train8/weights/best.pt")
+        self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100

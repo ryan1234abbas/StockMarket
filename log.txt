@@ -1600,3 +1600,51 @@ Runtime: 0 min 50.10 sec
 Average runtime per frame: 0.21 seconds
 Final number of buys: 3
 Final number of sells: 0
+
+Time: 21:57  Date: 2025-10-06
+Runtime: 2 min 23.78 sec
+Average runtime per frame: 0.36 seconds
+Final number of buys: 4
+Final number of sells: 0
+
+Time: 22:13  Date: 2025-10-06
+Runtime: 6 min 23.76 sec
+Average runtime per frame: 0.37 seconds
+Final number of buys: 11
+Final number of sells: 0
+
+Time: 22:18  Date: 2025-10-06
+Runtime: 0 min 21.46 sec
+Average runtime per frame: 0.38 seconds
+Final number of buys: 0
+Final number of sells: 0
+
+Time: 22:20  Date: 2025-10-06
+Runtime: 0 min 20.51 sec
+Average runtime per frame: 0.36 seconds
+Final number of buys: 0
+Final number of sells: 0
+
+Time: 22:49  Date: 2025-10-06
+Runtime: 27 min 36.64 sec
+Average runtime per frame: 0.35 seconds
+Final number of buys: 14
+Final number of sells: 14
+
+Time: 14:20  Date: 2025-10-10
+Runtime: 116 min 32.76 sec
+Average runtime per frame: 0.35 seconds
+Final number of buys: 47
+Final number of sells: 49
+
+Time: 15:00  Date: 2025-10-10
+Runtime: 22 min 19.38 sec
+Average runtime per frame: 0.34 seconds
+Final number of buys: 18
+Final number of sells: 3
+
+Time: 23:05  Date: 2025-10-10
+Runtime: 482 min 2.75 sec
+Average runtime per frame: 0.35 seconds
+Final number of buys: 91
+Final number of sells: 73
