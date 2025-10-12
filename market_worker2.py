@@ -208,7 +208,7 @@ class DetectionWorker(QThread):
                 current_1510_rml_x < self.last_rml_1510_x - 10):  # 10px tolerance
                 
                 print(f"1510 RML moved backwards! Blocking trades. Last: {self.last_rml_1510_x}, Current: {current_1510_rml_x}")
-                self.backward_lockout_frames = 12
+                self.backward_lockout_frames = 10
                 self.rml_backward_lockout = True
                 
                 save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
