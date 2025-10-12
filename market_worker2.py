@@ -498,9 +498,6 @@ class DetectionWorker(QThread):
                 while self.running:
                     start_time = time.time()
 
-                    if torch.cuda.is_available():
-                        print(f"Model device in worker: {next(self.model.model.parameters()).device}")
-
                     #  Detect app window dynamically 
                     if platform.system() == "Darwin":
                         self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("QuickTime Player")
