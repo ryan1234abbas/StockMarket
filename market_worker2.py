@@ -67,6 +67,22 @@ class DetectionWorker(QThread):
         self.buy_cooldown = 3
         self.sell_cooldown = 3
 
+        # PRE-LOAD BUTTONS AT STARTUP
+        print("🔄 Pre-loading trade buttons...")
+        try:
+            self.cached_buy_btn = pyautogui.locateCenterOnScreen('buy_sell/Buybutton3.png', confidence=0.8)
+            print("✅ Buy button pre-loaded")
+        except:
+            print("❌ Buy button not found during pre-load")
+            self.cached_buy_btn = None
+            
+        try:
+            self.cached_sell_btn = pyautogui.locateCenterOnScreen('buy_sell/Sellbutton3.png', confidence=0.8)
+            print("✅ Sell button pre-loaded")
+        except:
+            print("❌ Sell button not found during pre-load")
+            self.cached_sell_btn = None
+
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
                 right_img, boxes_1510, labels_1510, scores_1510,
                 mode, candle_boxes=None, candle_labels=None,
@@ -731,13 +747,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):      
         #Ryan's Laptop
-        #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
+        self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
 
         #AP's Laptop
         # self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
 
         # AP's main machine
-        self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
+        #self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
         
         print(f"CUDA available: {torch.cuda.is_available()}")
         print(f"CUDA device count: {torch.cuda.device_count()}")
@@ -777,6 +793,10 @@ if __name__ == "__main__":
     mode = input("Enter mode (buy / sell / both): ").strip().lower()
     while mode not in ("buy", "sell", "both"):
         mode = input("Invalid input, enter buy, sell, or both: ").strip().lower()
+    
+    for i in reversed(range(3)):
+        print(f"Starting in {i+1}")
+        time.sleep(1)
 
     mw = MarketWorker()
     sys.exit(mw.app.exec_())
