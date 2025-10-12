@@ -96,7 +96,7 @@ class DetectionWorker(QThread):
                                 box_1510, rightmost_lbl_1510, score_1510,
                                 box_second_1510, second_lbl_1510, score_second_1510,
                                 candle_boxes):
-
+                """Save debug images regardless of trade blocking"""
                 debug_3020, debug_1510 = left_img.copy(), right_img.copy()
 
                 if box_3020:
@@ -111,44 +111,12 @@ class DetectionWorker(QThread):
                     cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})",
                                 (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-                    coord_text = f"[{x0},{y0},{x1},{y1}]"
-                    cv2.putText(debug_1510, coord_text, (x0, y1 + 15), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
-
                 if box_second_1510 and second_lbl_1510:
                     x0, y0, x1, y1 = box_second_1510
                     cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 2)
                     cv2.putText(debug_1510, f"{second_lbl_1510} ({score_second_1510:.2f})",
                                 (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
                 
-                #candle drawings
-                if candle_boxes:
-                    # Find the rightmost candle
-                    rightmost_candle = max(candle_boxes, key=lambda b: b[2])
-                    
-                    for cbox in candle_boxes:
-                        cx0, cy0, cx1, cy1 = cbox
-                        # Draw all candles in blue
-                        cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 0, 0), 1)
-                        
-                        # Draw candle center point
-                        cx_center = (cx0 + cx1) // 2
-                        cy_center = (cy0 + cy1) // 2
-                        cv2.circle(debug_1510, (cx_center, cy_center), 3, (0, 0, 255), -1)
-                        
-                        # Write coordinates ONLY for rightmost candle
-                        if cbox == rightmost_candle:
-                            coord_text = f"({cx0},{cy0})-({cx1},{cy1})"
-                            cv2.putText(debug_1510, coord_text, (cx0, cy1 + 15), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                                    
-                        # Highlight rightmost candle in purple
-                        if cbox == rightmost_candle:
-                            cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 0, 255), 1)
-                            cv2.putText(debug_1510, "Rightmost", (cx0, cy0 - 10), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 255), 1)
-                                    
-
                 os.makedirs("dummy", exist_ok=True)
                 cv2.imwrite("dummy/debug_3020.png", debug_3020)
                 cv2.imwrite("dummy/debug_1510.png", debug_1510)
@@ -196,10 +164,10 @@ class DetectionWorker(QThread):
                     self.rml_backward_lockout = False
                     print("Backward movement lockout expired")
                 else:
-                    # Still in lockout period - block only SRL trades
+                    # Still in lockout period - block all trades
                     print(f"Backward lockout active: {self.backward_lockout_frames} frames remaining")
                     return None
-                    
+
             # Check for significant backward movement in 3020
             if (current_3020_rml_x is not None and 
                 self.last_correct_3020_rml_x is not None and
@@ -244,15 +212,7 @@ class DetectionWorker(QThread):
 
             # Current labels for SRL logic
             current_rml_1510 = rightmost_lbl_1510
-
-            # SRL logic: SRL starts as None, only gets assigned when RML changes
-            if self.prev_rml_1510 is not None and current_rml_1510 != self.prev_rml_1510:
-                # RML changed - SRL becomes the previous RML value
-                current_srl_1510 = self.prev_rml_1510
-                print(f"SRL assigned: {current_srl_1510} (previous RML)")
-            else:
-                # No RML change yet - SRL remains None
-                current_srl_1510 = None
+            current_srl_1510 = second_lbl_1510
 
             # 🔓 RESET SRL LOCKOUT AFTER COOLDOWN PERIOD
             if (current_rml_1510 != self.prev_rml_1510 and not self.rml_backward_lockout):
@@ -289,7 +249,7 @@ class DetectionWorker(QThread):
                 cx0, cy0, cx1, cy1 = rightmost_candle
                 cx_center = (cx0 + cx1) // 2
                 
-                return lx0+8 <= cx_center <= lx1-8
+                return lx0 <= cx_center+1000 <= lx1
 
             # PRIMARY TRADE: Continuous check for candle with current RML
             primary_trade_executed = False
@@ -374,7 +334,7 @@ class DetectionWorker(QThread):
             if (not self.rml_backward_lockout and
                 not self.srl_lockout_after_trade and
                 current_rml_1510 != self.prev_rml_1510 and 
-                current_srl_1510 is not None and
+                current_srl_1510 != self.prev_srl_1510 and
                 current_rml_1510 and current_srl_1510):  # Both are valid
                 
                 # Update tracking
@@ -631,7 +591,7 @@ class DetectionWorker(QThread):
                     #process candle results
                     candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_results)
                     candle_boxes = [b for i, (b, l) in enumerate(zip(candle_boxes, candle_labels)) 
-                if l == "candle" and candle_scores[i] >= 0.2]
+                if l == "candle" and candle_scores[i] >= 0.1]
 
                     decision = self.analyze_candles_tm(
                         left_img, merged_left, merged_left_labels, left_conf,
@@ -768,13 +728,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):      
         #Ryan's Laptop
-        self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
+        #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
 
         #AP's Laptop
         # self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
 
         # AP's main machine
-        #self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
+        self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100
