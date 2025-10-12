@@ -562,13 +562,13 @@ class DetectionWorker(QThread):
                     # Model predictions 
                     combined_images = [left_img, right_img]
                     all_results = self.model.predict(
+                        device='0' if torch.cuda.is_available() else 'cpu',  
                         source=combined_images,
                         verbose=False,
                         stream=False, 
                         conf=0.01,  # Use lower confidence, filter candles later
                         iou=0.15,
-                        imgsz=640,
-                        device=device
+                        imgsz=640
                     )
 
                     # Split results
@@ -735,6 +735,9 @@ class MarketWorker:
 
         # AP's main machine
         self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
+        if torch.cuda.is_available():
+            self.model.to('cuda')
+            print("Model moved to GPU")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100
