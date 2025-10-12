@@ -547,9 +547,9 @@ class DetectionWorker(QThread):
                     
                     if platform.system() == "Windows":
                         trim_right = 255            # right monitor
-                        trim_bottom = 80            # both monitors
+                        trim_bottom = 120            # both monitors
                         trim_right_left_img = 150   # left monitor
-                        trim_top = 30               # both monitors
+                        trim_top = 45               # both monitors
                         shift_right = 40            # right monitor
                         trim_right_rimg = 400  # right monitor
 
@@ -560,6 +560,7 @@ class DetectionWorker(QThread):
                         trim_right_left_img = 230
                         trim_top = 60
                         shift_right = 230
+                        trim_right_rimg = trim_right
 
                     left_img = full[
                         trim_top : h - trim_bottom,
@@ -569,7 +570,7 @@ class DetectionWorker(QThread):
 
                     right_img = full[
                         trim_top : h - trim_bottom,
-                        (w // 2 - shift_right) : (w - trim_right - shift_right),
+                        (w // 2 - shift_right) : (w - trim_right_rimg - shift_right),
                         :
                     ]
 
@@ -747,13 +748,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):      
         #Ryan's Laptop
-        self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
+        #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
 
         #AP's Laptop
         # self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
 
         # AP's main machine
-        #self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
+        self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
         
         print(f"CUDA available: {torch.cuda.is_available()}")
         print(f"CUDA device count: {torch.cuda.device_count()}")
