@@ -547,30 +547,31 @@ class DetectionWorker(QThread):
                     
                     if platform.system() == "Windows":
                         trim_right = 255            # right monitor
-                        trim_bottom = 120            # both monitors
+                        trim_bottom = 120           # both monitors
                         trim_right_left_img = 150   # left monitor
                         trim_top = 45               # both monitors
                         shift_right = 40            # right monitor
-                        trim_right_rimg = 400  # right monitor
+                        trim_right_rimg = 400       # right monitor - THIS IS WHAT YOU WANT TO ADJUST
 
-                    
                     elif platform.system() == "Darwin":
                         trim_right = 300
                         trim_bottom = 300
                         trim_right_left_img = 230
                         trim_top = 60
                         shift_right = 230
-                        trim_right_rimg = trim_right
+                        trim_right_rimg = trim_right  # or set a specific value like 400
 
+                    # Left image crop (unchanged)
                     left_img = full[
                         trim_top : h - trim_bottom,
                         : (w // 2) - trim_right_left_img,
                         :
                     ]
 
+                    # FIXED: Right image crop - properly trim from the right side
                     right_img = full[
                         trim_top : h - trim_bottom,
-                        (w // 2 - shift_right) : (w - trim_right_rimg - shift_right),
+                        (w // 2 - shift_right) : (w - trim_right - trim_right_rimg),  # CHANGED THIS LINE
                         :
                     ]
 
