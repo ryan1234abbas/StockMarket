@@ -747,13 +747,13 @@ class DetectionWorker(QThread):
 class MarketWorker:
     def __init__(self):      
         #Ryan's Laptop
-        self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
+        #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
 
         #AP's Laptop
         # self.model = YOLO('/Users/Owner/StockMarket/runs/detect2/train8/weights/best.pt')
 
         # AP's main machine
-        #self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
+        self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
 
         print(f"CUDA available: {torch.cuda.is_available()}")
         print(f"CUDA device count: {torch.cuda.device_count()}")
