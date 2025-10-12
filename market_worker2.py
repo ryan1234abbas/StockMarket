@@ -482,6 +482,9 @@ class DetectionWorker(QThread):
                 while self.running:
                     start_time = time.time()
 
+                    if torch.cuda.is_available():
+                        print(f"Model device in worker: {next(self.model.model.parameters()).device}")
+
                     #  Detect app window dynamically 
                     if platform.system() == "Darwin":
                         self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("QuickTime Player")
@@ -562,7 +565,7 @@ class DetectionWorker(QThread):
                     # Model predictions 
                     combined_images = [left_img, right_img]
                     all_results = self.model.predict(
-                        device='0' if torch.cuda.is_available() else 'cpu',  
+                        device=0 if torch.cuda.is_available() else 'cpu',  # ← CHANGE TO INTEGER 0
                         source=combined_images,
                         verbose=False,
                         stream=False, 
@@ -735,9 +738,17 @@ class MarketWorker:
 
         # AP's main machine
         self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
+        
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        print(f"CUDA device count: {torch.cuda.device_count()}")
         if torch.cuda.is_available():
+            print(f"GPU: {torch.cuda.get_device_name()}")
             self.model.to('cuda')
             print("Model moved to GPU")
+            # Check where model actually is
+            print(f"Model device: {next(self.model.model.parameters()).device}")
+        else:
+            print("Using CPU")
 
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.offset_x = 100
