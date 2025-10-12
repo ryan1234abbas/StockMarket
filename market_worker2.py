@@ -547,7 +547,7 @@ class DetectionWorker(QThread):
                     
                     if platform.system() == "Windows":
                         trim_right = 255            # right monitor
-                        trim_bottom = 120           # both monitors
+                        trim_bottom = 230           # both monitors
                         trim_right_left_img = 150   # left monitor
                         trim_top = 45               # both monitors
                         shift_right = 40            # right monitor
