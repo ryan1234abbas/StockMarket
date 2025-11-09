@@ -63,6 +63,8 @@ class DetectionWorker(QThread):
         self.backward_lockout_frames = 0   
         self.pending_srml = None
         self.plus_minus = 5
+        self.pending_trade = None
+        self.trade_timeout = 2.0
 
 
         # change based on speed of market
@@ -157,7 +159,11 @@ class DetectionWorker(QThread):
                 os.makedirs("dummy", exist_ok=True)
                 cv2.imwrite("dummy/debug_3020.png", debug_3020)
                 cv2.imwrite("dummy/debug_1510.png", debug_1510)
-                
+            
+            if self.pending_trade and current_time - self.pending_trade[1] > self.trade_timeout:
+                print(f"Trade timeout - clearing stuck {self.pending_trade[0]} trade")
+                self.pending_trade = None
+
             # Get rightmost for 3020
             rightmost_lbl_3020, box_3020, score_3020 = self.get_rightmost_label(
                 boxes_3020, labels_3020, scores_3020, min_conf=0.30
@@ -340,15 +346,18 @@ class DetectionWorker(QThread):
             # PRIMARY TRADE: Continuous check for candle with current RML
             primary_trade_executed = False
             
-            # BUY condition: 3020=HH and 1510=HL with candle above HL
-            if (
-                not self.rml_backward_lockout and # Only proceed if RML hasn't moved backwards
+            # BUY condition - FIXED:
+            if (not self.rml_backward_lockout and 
+                not self.pending_trade and
                 rightmost_lbl_3020 == "HH"
                 and rightmost_lbl_1510 == "HL"
                 and mode in ("buy", "both")
                 and current_time - self.last_buy_time >= self.buy_cooldown
-                and (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))
-            ):
+                and (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))):
+                
+                # SET pending_trade HERE (before executing trade):
+                self.pending_trade = ("BUY", current_time)
+                
                 self.last_buy_time = current_time
                 self.buy_count += 1
                 decision = "BUY"
@@ -357,61 +366,39 @@ class DetectionWorker(QThread):
                 self.pending_srl_trade = None  
                 
                 pyautogui.hotkey('ctrl','b')
-                #press_trade(isbuy=True)               
                 print("BUY executed - HH + HL with candle above HL")
                 return decision
 
-            # SELL condition: 3020=LL and 1510=LH with candle below LH
-            elif (
-                not self.rml_backward_lockout and
+            # SELL condition - FIXED:
+            elif (not self.rml_backward_lockout and
+                not self.pending_trade and
                 rightmost_lbl_3020 == "LL"
                 and rightmost_lbl_1510 == "LH"
                 and mode in ("sell", "both")
                 and current_time - self.last_sell_time >= self.sell_cooldown
-                and (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))
-            ):
+                and (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))):
+                
+                # SET pending_trade HERE (before executing trade):
+                self.pending_trade = ("SELL", current_time)
+                
                 self.last_sell_time = current_time
                 self.sell_count += 1
                 decision = "SELL"
                 primary_trade_executed = True
                 self.srl_lockout_after_trade = True
-                self.pending_srl_trade = None  # Clear any pending SRL trade
+                self.pending_srl_trade = None  
                 
                 pyautogui.hotkey('ctrl','m')
-                #press_trade(isbuy=False)
                 print("SELL executed - LL + LH with candle below LH")
-                
                 return decision
 
-            # CONTINUOUS CHECK: Update pending SRL trade when conditions are met but no candle
-            if not primary_trade_executed and not self.rml_backward_lockout:
-                # BUY opportunity: 3020=HH and 1510=HL but no candle
-                if (
-                    rightmost_lbl_3020 == "HH"
-                    and rightmost_lbl_1510 == "HL"
-                    and mode in ("buy", "both")
-                    and current_time - self.last_buy_time >= self.buy_cooldown
-                    and not (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus<= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))
-                ):
-                    # Continuously update the pending trade while conditions hold
-                    self.pending_srl_trade = ("BUY", "HL")
-                
-                # SELL opportunity: 3020=LL and 1510=LH but no candle  
-                elif (
-                    rightmost_lbl_3020 == "LL"
-                    and rightmost_lbl_1510 == "LH"
-                    and mode in ("sell", "both")
-                    and current_time - self.last_sell_time >= self.sell_cooldown
-                    and not (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))):
-                    # Continuously update the pending trade while conditions hold
-                    self.pending_srl_trade = ("SELL", "LH")
-                    
-            # SRL BACKUP TRADE: Execute when RML changes and SRL matches the pending trade
+            # SRL BACKUP TRADE - FIXED:
             if (not self.rml_backward_lockout and
+                not self.pending_trade and
                 not self.srl_lockout_after_trade and
                 current_rml_1510 != self.prev_rml_1510 and 
                 current_srl_1510 != self.prev_srl_1510 and
-                current_rml_1510 and current_srl_1510):  # Both are valid
+                current_rml_1510 and current_srl_1510):
                 
                 # Update tracking
                 self.prev_rml_1510 = current_rml_1510
@@ -423,17 +410,17 @@ class DetectionWorker(QThread):
                     mode in ("buy", "both") and
                     current_time - self.last_buy_time >= self.buy_cooldown):
                     
+                    # SET pending_trade HERE (before executing trade):
+                    self.pending_trade = ("BUY", current_time)
+                    
                     # Execute BUY
                     self.last_buy_time = current_time
                     self.buy_count += 1
                     decision = "BUY"
-                    self.srl_lockout_after_trade = True  # 🔒 LOCK SRL TRADES after SRL trade
+                    self.srl_lockout_after_trade = True
                     
                     pyautogui.hotkey('ctrl','b')
-                    #press_trade(isbuy=True)                   
-                   
                     print(f"BUY executed - HH + SRL {current_srl_1510} (both labels changed)")
-
                     return decision
 
                 elif (current_srl_1510 == "LH" and 
@@ -441,15 +428,16 @@ class DetectionWorker(QThread):
                     mode in ("sell", "both") and
                     current_time - self.last_sell_time >= self.sell_cooldown):
                     
+                    # SET pending_trade HERE (before executing trade):
+                    self.pending_trade = ("SELL", current_time)
+                    
                     # Execute SELL
                     self.last_sell_time = current_time
                     self.sell_count += 1
                     decision = "SELL"
-                    self.srl_lockout_after_trade = True  # 🔒 LOCK SRL TRADES after SRL trade
-                   
+                    self.srl_lockout_after_trade = True
+                
                     pyautogui.hotkey('ctrl','m')
-                    #press_trade(isbuy=False)
-
                     print(f"SELL executed - LL + SRL {current_srl_1510} (both labels changed)")
                     return decision
 
