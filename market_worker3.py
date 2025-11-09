@@ -129,12 +129,12 @@ class DetectionWorker(QThread):
                 if candle_boxes:
                     for i, candle_box in enumerate(candle_boxes):
                         cx0, cy0, cx1, cy1 = candle_box
-                        cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 255, 255), 2)  # Red boxes for candles
+                        cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 255, 255), 2)
                         
                         # Mark the rightmost candle with special color
                         rightmost_candle = max(candle_boxes, key=lambda b: b[2])
                         if candle_box == rightmost_candle:
-                            cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 255, 0), 3)  # Cyan for rightmost
+                            cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 255, 0), 3)
                             candle_center = (cx0 + cx1) // 2
                             cv2.putText(debug_1510, f"RMC: {candle_center}",
                                         (cx0, cy0 - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
@@ -149,7 +149,7 @@ class DetectionWorker(QThread):
                     rightmost_candle = max(candle_boxes, key=lambda b: b[2])
                     cx0, cy0, cx1, cy1 = rightmost_candle
                     candle_center = (cx0 + cx1) // 2
-      
+    
                     # Check and show alignment
                     aligned = lx0+self.plus_minus <= candle_center <= lx1-self.plus_minus
                     alignment_text = f"Aligned: {aligned}"
@@ -160,6 +160,7 @@ class DetectionWorker(QThread):
                 cv2.imwrite("dummy/debug_3020.png", debug_3020)
                 cv2.imwrite("dummy/debug_1510.png", debug_1510)
             
+            # Clear timeout trades (no pattern change needed)
             if self.pending_trade and current_time - self.pending_trade[1] > self.trade_timeout:
                 print(f"Trade timeout - clearing stuck {self.pending_trade[0]} trade")
                 self.pending_trade = None
@@ -177,7 +178,7 @@ class DetectionWorker(QThread):
             )
             if first_1510:
                 rightmost_lbl_1510, box_1510, score_1510 = first_1510
-                current_1510_rml_x = box_1510[0]  # x0 coordinate of current RML
+                current_1510_rml_x = box_1510[0]
             else:
                 rightmost_lbl_1510, box_1510, score_1510 = None, None, None
                 current_1510_rml_x = None
@@ -190,91 +191,83 @@ class DetectionWorker(QThread):
             # Define current_3020_rml_x
             current_3020_rml_x = box_3020[0] if box_3020 else None
 
-            # === SIMPLIFIED BACKWARD MOVEMENT DETECTION ===
-            # Skip first frame initialization
+            # === PATTERN SIGNATURE FOR DUPLICATE DETECTION ===
+            # Create unique signature: (3020_label, 1510_RML_label, 1510_RML_x_position_bucket)
+            # Using x-position buckets (rounded to nearest 20px) to allow slight movements
+            def get_pattern_signature(lbl_3020, lbl_1510, x_pos, is_srl=False):
+                if not lbl_3020 or not lbl_1510 or x_pos is None:
+                    return None
+                # Round x to nearest 20px to create position buckets
+                x_bucket = round(x_pos / 20) * 20
+                trade_type = "SRL" if is_srl else "RML"
+                return (lbl_3020, lbl_1510, x_bucket, trade_type)
+
+            # === BACKWARD MOVEMENT DETECTION ===
             if self.is_first_frame:
                 self.is_first_frame = False
                 if current_3020_rml_x is not None:
                     self.last_correct_3020_rml_x = current_3020_rml_x
                 if current_1510_rml_x is not None:
                     self.last_rml_1510_x = current_1510_rml_x
-                return None  # Skip trade logic on first frame
+                return None
 
-            # Handle backward lockout countdown FIRST
+            # Handle backward lockout countdown
             if self.backward_lockout_frames > 0:
                 self.backward_lockout_frames -= 1
                 if self.backward_lockout_frames == 0:
                     self.rml_backward_lockout = False
-                    print("Backward movement lockout expired")
+                    # CLEAR pattern signature when backward movement ends
+                    self.last_executed_pattern = None
+                    print("Backward movement lockout expired - pattern signature cleared")
                 else:
-                    # Still in lockout period - block all trades
                     print(f"Backward lockout active: {self.backward_lockout_frames} frames remaining")
                     return None
             
-            # NEW: SRML becomes None during backward movement
+            # SRML handling during backward movement
             if self.rml_backward_lockout:
-                # Store current RML as pending SRML for after lockout
                 if rightmost_lbl_1510 and box_1510 and not hasattr(self, 'pending_srml'):
                     self.pending_srml = (rightmost_lbl_1510, box_1510, score_1510)
                     print(f"Stored pending SRML: {rightmost_lbl_1510}")
                 
-                # Force SRML to None during backward movement
                 second_lbl_1510 = None
                 box_second_1510 = None
                 score_second_1510 = None
 
-            # NEW: Restore SRML after backward movement when RML changes
             elif (hasattr(self, 'pending_srml') and self.pending_srml and 
                 current_rml_1510 != self.prev_rml_1510):
                 
                 stored_lbl, stored_box, stored_score = self.pending_srml
-                # Only restore if RML is different from stored SRML
                 if rightmost_lbl_1510 != stored_lbl:
                     print(f"Restoring SRML from backward: {stored_lbl}")
                     second_lbl_1510 = stored_lbl
                     box_second_1510 = stored_box
                     score_second_1510 = stored_score
                 
-                # Clear pending SRML
                 self.pending_srml = None
 
-            # Check for significant backward movement in 3020
+            # Check for backward movement in 3020
             if (current_3020_rml_x is not None and 
                 self.last_correct_3020_rml_x is not None and
-                current_3020_rml_x < self.last_correct_3020_rml_x -25):  # 10px tolerance
+                current_3020_rml_x < self.last_correct_3020_rml_x - 25):
                 
-                print(f"3020 RML moved backwards! Blocking trades. Last: {self.last_correct_3020_rml_x}, Current: {current_3020_rml_x}")
+                print(f"3020 RML moved backwards! Last: {self.last_correct_3020_rml_x}, Current: {current_3020_rml_x}")
                 self.backward_lockout_frames = 10
                 self.rml_backward_lockout = True
-                
-                # save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                #                 box_1510, rightmost_lbl_1510, score_1510,
-                #                 box_second_1510, second_lbl_1510, score_second_1510,
-                #                 candle_boxes)
-                
-                # Update tracking to prevent repeated triggers
                 self.last_correct_3020_rml_x = current_3020_rml_x
                 return None
 
-            # Check for significant backward movement in 1510
+            # Check for backward movement in 1510
             if (current_1510_rml_x is not None and 
                 self.last_rml_1510_x is not None and
-                current_1510_rml_x < self.last_rml_1510_x - 10):  # 10px tolerance
+                current_1510_rml_x < self.last_rml_1510_x - 10):
                 
-                print(f"1510 RML moved backwards! Blocking trades. Last: {self.last_rml_1510_x}, Current: {current_1510_rml_x}")
+                print(f"1510 RML moved backwards! Last: {self.last_rml_1510_x}, Current: {current_1510_rml_x}")
                 self.backward_lockout_frames = 5
                 self.rml_backward_lockout = True
-                
-                # save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                #                 box_1510, rightmost_lbl_1510, score_1510,
-                #                 box_second_1510, second_lbl_1510, score_second_1510,
-                #                 candle_boxes)
-                
-                # Update tracking to prevent repeated triggers
                 self.last_rml_1510_x = current_1510_rml_x
                 return None
 
-            # Update normal tracking (only when not in backward movement)
+            # Update normal tracking
             if current_3020_rml_x is not None:
                 self.last_correct_3020_rml_x = current_3020_rml_x
             if current_1510_rml_x is not None:
@@ -284,10 +277,12 @@ class DetectionWorker(QThread):
             current_rml_1510 = rightmost_lbl_1510
             current_srl_1510 = second_lbl_1510
 
-            #RESET SRL LOCKOUT AFTER COOLDOWN PERIOD
+            # RESET SRL LOCKOUT when RML changes (pattern evolved)
             if (current_rml_1510 != self.prev_rml_1510 and not self.rml_backward_lockout):
                 self.srl_lockout_after_trade = False
-                print("SRL lockout reset - RML changed")
+                # CLEAR pattern signature when RML changes (new pattern available)
+                self.last_executed_pattern = None
+                print("SRL lockout reset - RML changed - pattern signature cleared")
                 
             # Print detection info
             conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 else "N/A"
@@ -297,102 +292,90 @@ class DetectionWorker(QThread):
             print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}")
             print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}, Box: {box_1510 or 'None'}")
             print(f"1510 Second Label: {second_lbl_1510 or 'None'} with confidence {conf_1510_second}, Box: {box_second_1510 or 'None'}")
-            #print(f"SRL Lockout: {self.srl_lockout_after_trade}")
-            #print(f"Backward Lockout: {self.backward_lockout_frames > 0}")
 
             if candle_boxes:
-                rightmost_candle = max(candle_boxes, key=lambda b: b[2])  # Find by rightmost x (b[2])
-                #print(f"Rightmost Candle Box: {rightmost_candle}")
+                rightmost_candle = max(candle_boxes, key=lambda b: b[2])
             else:
                 print("Rightmost Candle: None")
                 
-            # --- Trade logic ---
-            # def candle_center_within_box(label_box, candle_boxes):
-            #     """ Returns True if the rightmost candle's center is within the horizontal range of the label box. """
-            #     if not label_box or not candle_boxes:
-            #         return False
-                
-            #     # Get the rightmost candle
-            #     rightmost_candle = max(candle_boxes, key=lambda b: b[2])
-                
-            #     lx0, ly0, lx1, ly1 = label_box
-            #     cx0, cy0, cx1, cy1 = rightmost_candle
-            #     cx_center = (cx0 + cx1) // 2
-                
-            #     return lx0+7 <= cx_center <= lx1-7
-
-            # def press_trade(isbuy=True):
-            #     """Smart trade execution with fallbacks"""
-            #     try:
-            #         if isbuy:
-            #             keyboard.press_and_release('ctrl+B')
-            #         else:
-            #             keyboard.press_and_release('ctrl+M')
-            #         print("Used capital letters")
-            #     except:
-            #         try:
-            #             if isbuy:
-            #                 keyboard.press_and_release('ctrl+b')
-            #             else:
-            #                 keyboard.press_and_release('ctrl+m')
-            #             print("Used lowercase letters")
-            #         except:
-            #             if isbuy:
-            #                 pyautogui.hotkey('ctrl','B')
-            #             else:
-            #                 pyautogui.hotkey('ctrl','M')
-            #             print("Used pyautogui")
-
-            # PRIMARY TRADE: Continuous check for candle with current RML
+            # === PRIMARY TRADE: RML with candle alignment ===
             primary_trade_executed = False
             
-            # BUY condition - FIXED:
+            # BUY condition with pattern duplicate check
             if (not self.rml_backward_lockout and 
                 not self.pending_trade and
                 rightmost_lbl_3020 == "HH"
                 and rightmost_lbl_1510 == "HL"
                 and mode in ("buy", "both")
                 and current_time - self.last_buy_time >= self.buy_cooldown
-                and (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))):
+                and box_1510 and candle_boxes):
                 
-                # SET pending_trade HERE (before executing trade):
-                self.pending_trade = ("BUY", current_time)
+                # Check candle alignment
+                rightmost_candle = max(candle_boxes, key=lambda b: b[2])
+                candle_center = (rightmost_candle[0] + rightmost_candle[2]) // 2
+                candle_aligned = box_1510[0] + self.plus_minus <= candle_center <= box_1510[2] - self.plus_minus
                 
-                self.last_buy_time = current_time
-                self.buy_count += 1
-                decision = "BUY"
-                primary_trade_executed = True
-                self.srl_lockout_after_trade = True
-                self.pending_srl_trade = None  
-                
-                pyautogui.hotkey('ctrl','b')
-                print("BUY executed - HH + HL with candle above HL")
-                return decision
+                if candle_aligned:
+                    # Generate pattern signature
+                    pattern_sig = get_pattern_signature(rightmost_lbl_3020, rightmost_lbl_1510, current_1510_rml_x, is_srl=False)
+                    
+                    # Check if this is the SAME pattern we just traded
+                    if pattern_sig == self.last_executed_pattern:
+                        print(f"DUPLICATE PATTERN BLOCKED: {pattern_sig}")
+                        return None
+                    
+                    # NEW PATTERN - Execute trade
+                    self.pending_trade = ("BUY", current_time)
+                    self.last_buy_time = current_time
+                    self.buy_count += 1
+                    decision = "BUY"
+                    primary_trade_executed = True
+                    self.srl_lockout_after_trade = True
+                    self.pending_srl_trade = None
+                    self.last_executed_pattern = pattern_sig  # Save this pattern
+                    
+                    pyautogui.hotkey('ctrl','b')
+                    print(f"BUY executed - Pattern: {pattern_sig}")
+                    return decision
 
-            # SELL condition - FIXED:
+            # SELL condition with pattern duplicate check
             elif (not self.rml_backward_lockout and
                 not self.pending_trade and
                 rightmost_lbl_3020 == "LL"
                 and rightmost_lbl_1510 == "LH"
                 and mode in ("sell", "both")
                 and current_time - self.last_sell_time >= self.sell_cooldown
-                and (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))):
+                and box_1510 and candle_boxes):
                 
-                # SET pending_trade HERE (before executing trade):
-                self.pending_trade = ("SELL", current_time)
+                # Check candle alignment
+                rightmost_candle = max(candle_boxes, key=lambda b: b[2])
+                candle_center = (rightmost_candle[0] + rightmost_candle[2]) // 2
+                candle_aligned = box_1510[0] + self.plus_minus <= candle_center <= box_1510[2] - self.plus_minus
                 
-                self.last_sell_time = current_time
-                self.sell_count += 1
-                decision = "SELL"
-                primary_trade_executed = True
-                self.srl_lockout_after_trade = True
-                self.pending_srl_trade = None  
-                
-                pyautogui.hotkey('ctrl','m')
-                print("SELL executed - LL + LH with candle below LH")
-                return decision
+                if candle_aligned:
+                    # Generate pattern signature
+                    pattern_sig = get_pattern_signature(rightmost_lbl_3020, rightmost_lbl_1510, current_1510_rml_x, is_srl=False)
+                    
+                    # Check if this is the SAME pattern we just traded
+                    if pattern_sig == self.last_executed_pattern:
+                        print(f"DUPLICATE PATTERN BLOCKED: {pattern_sig}")
+                        return None
+                    
+                    # NEW PATTERN - Execute trade
+                    self.pending_trade = ("SELL", current_time)
+                    self.last_sell_time = current_time
+                    self.sell_count += 1
+                    decision = "SELL"
+                    primary_trade_executed = True
+                    self.srl_lockout_after_trade = True
+                    self.pending_srl_trade = None
+                    self.last_executed_pattern = pattern_sig  # Save this pattern
+                    
+                    pyautogui.hotkey('ctrl','m')
+                    print(f"SELL executed - Pattern: {pattern_sig}")
+                    return decision
 
-            # SRL BACKUP TRADE - FIXED:
+            # === SRL BACKUP TRADE with pattern duplicate check ===
             if (not self.rml_backward_lockout and
                 not self.pending_trade and
                 not self.srl_lockout_after_trade and
@@ -404,44 +387,61 @@ class DetectionWorker(QThread):
                 self.prev_rml_1510 = current_rml_1510
                 self.prev_srl_1510 = current_srl_1510
                 
-                # Check SRL trade conditions
+                # SRL BUY condition
                 if (current_srl_1510 == "HL" and 
                     rightmost_lbl_3020 == "HH" and 
                     mode in ("buy", "both") and
                     current_time - self.last_buy_time >= self.buy_cooldown):
                     
-                    # SET pending_trade HERE (before executing trade):
-                    self.pending_trade = ("BUY", current_time)
+                    # Generate SRL pattern signature using SECOND label's position
+                    srl_x = box_second_1510[0] if box_second_1510 else None
+                    pattern_sig = get_pattern_signature(rightmost_lbl_3020, current_srl_1510, srl_x, is_srl=True)
                     
-                    # Execute BUY
+                    # Check if this is the SAME SRL pattern we just traded
+                    if pattern_sig == self.last_executed_pattern:
+                        print(f"DUPLICATE SRL PATTERN BLOCKED: {pattern_sig}")
+                        return None
+                    
+                    # NEW SRL PATTERN - Execute trade
+                    self.pending_trade = ("BUY", current_time)
                     self.last_buy_time = current_time
                     self.buy_count += 1
                     decision = "BUY"
                     self.srl_lockout_after_trade = True
+                    self.last_executed_pattern = pattern_sig  # Save this SRL pattern
                     
                     pyautogui.hotkey('ctrl','b')
-                    print(f"BUY executed - HH + SRL {current_srl_1510} (both labels changed)")
+                    print(f"BUY executed - SRL Pattern: {pattern_sig}")
                     return decision
 
+                # SRL SELL condition
                 elif (current_srl_1510 == "LH" and 
                     rightmost_lbl_3020 == "LL" and 
                     mode in ("sell", "both") and
                     current_time - self.last_sell_time >= self.sell_cooldown):
                     
-                    # SET pending_trade HERE (before executing trade):
-                    self.pending_trade = ("SELL", current_time)
+                    # Generate SRL pattern signature using SECOND label's position
+                    srl_x = box_second_1510[0] if box_second_1510 else None
+                    pattern_sig = get_pattern_signature(rightmost_lbl_3020, current_srl_1510, srl_x, is_srl=True)
                     
-                    # Execute SELL
+                    # Check if this is the SAME SRL pattern we just traded
+                    if pattern_sig == self.last_executed_pattern:
+                        print(f"DUPLICATE SRL PATTERN BLOCKED: {pattern_sig}")
+                        return None
+                    
+                    # NEW SRL PATTERN - Execute trade
+                    self.pending_trade = ("SELL", current_time)
                     self.last_sell_time = current_time
                     self.sell_count += 1
                     decision = "SELL"
                     self.srl_lockout_after_trade = True
+                    self.last_executed_pattern = pattern_sig  # Save this SRL pattern
                 
                     pyautogui.hotkey('ctrl','m')
-                    print(f"SELL executed - LL + SRL {current_srl_1510} (both labels changed)")
+                    print(f"SELL executed - SRL Pattern: {pattern_sig}")
                     return decision
 
-            # If only RML changed but SRL stayed same → ignore (just maturing)
+            # Update RML tracking if only RML changed (SRL stayed same - just maturing)
             elif current_rml_1510 != self.prev_rml_1510 and not self.rml_backward_lockout:
                 self.prev_rml_1510 = current_rml_1510
                 
@@ -451,8 +451,7 @@ class DetectionWorker(QThread):
                         candle_boxes)
 
             
-            return decision
-            
+            return decision         
 
     def get_rightmost_label(self, boxes, labels, scores, min_conf=0.30):
             valid_labels = {"HH", "LL", "HL", "LH"}
