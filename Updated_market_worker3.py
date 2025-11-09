@@ -59,16 +59,13 @@ class DetectionWorker(QThread):
         self.last_correct_3020_rml_x = None
         self.is_first_frame = True
         self.last_rml_1510_x = None
-        self.rml_backward_lockout = False  
-        self.backward_lockout_frames = 0   
-        self.pending_srml = None
-        self.plus_minus = 5
-
+        self.rml_backward_lockout = False  # ADD THIS
+        self.backward_lockout_frames = 0   # ADD THIS
 
         # change based on speed of market
         # change based on desired buy/sell frequency
-        self.buy_cooldown = 4.5
-        self.sell_cooldown = 4.5
+        self.buy_cooldown = 3
+        self.sell_cooldown = 3
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
                 right_img, boxes_1510, labels_1510, scores_1510,
@@ -109,10 +106,10 @@ class DetectionWorker(QThread):
                     cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})",
                                 (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-                # Draw 1510 RML label (red)
+                # Draw 1510 RML label (yellow)
                 if box_1510 and rightmost_lbl_1510:
                     x0, y0, x1, y1 = box_1510
-                    cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 0, 255), 2)
+                    cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 255, 255), 2)
                     cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})",
                                 (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
@@ -123,11 +120,11 @@ class DetectionWorker(QThread):
                     cv2.putText(debug_1510, f"{second_lbl_1510} ({score_second_1510:.2f})",
                                 (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
 
-                # DRAW CANDLES on 1510 image (yellow boxes)
+                # 🆕 DRAW CANDLES on 1510 image (red boxes)
                 if candle_boxes:
                     for i, candle_box in enumerate(candle_boxes):
                         cx0, cy0, cx1, cy1 = candle_box
-                        cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 255, 255), 2)  # Red boxes for candles
+                        cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 0, 255), 2)  # Red boxes for candles
                         
                         # Mark the rightmost candle with special color
                         rightmost_candle = max(candle_boxes, key=lambda b: b[2])
@@ -141,15 +138,22 @@ class DetectionWorker(QThread):
                         candle_center = (cx0 + cx1) // 2
                         cv2.circle(debug_1510, (candle_center, (cy0 + cy1) // 2), 3, (0, 0, 255), -1)
                 
-                # Draw alignment lines if we have both label and candles
+                # 🆕 Draw alignment lines if we have both label and candles
                 if box_1510 and candle_boxes:
                     lx0, ly0, lx1, ly1 = box_1510
                     rightmost_candle = max(candle_boxes, key=lambda b: b[2])
                     cx0, cy0, cx1, cy1 = rightmost_candle
                     candle_center = (cx0 + cx1) // 2
-      
+                    
+                    # Draw vertical line at label boundaries
+                    cv2.line(debug_1510, (lx0, 0), (lx0, debug_1510.shape[0]), (255, 255, 255), 1)
+                    cv2.line(debug_1510, (lx1, 0), (lx1, debug_1510.shape[0]), (255, 255, 255), 1)
+                    
+                    # Draw vertical line at candle center
+                    cv2.line(debug_1510, (candle_center, 0), (candle_center, debug_1510.shape[0]), (0, 255, 0), 2)
+                    
                     # Check and show alignment
-                    aligned = lx0+self.plus_minus <= candle_center <= lx1-self.plus_minus
+                    aligned = lx0+7 <= candle_center <= lx1-7
                     alignment_text = f"Aligned: {aligned}"
                     cv2.putText(debug_1510, alignment_text,
                                 (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if aligned else (0, 0, 255), 2)
@@ -204,41 +208,14 @@ class DetectionWorker(QThread):
                     # Still in lockout period - block all trades
                     print(f"Backward lockout active: {self.backward_lockout_frames} frames remaining")
                     return None
-            
-            # NEW: SRML becomes None during backward movement
-            if self.rml_backward_lockout:
-                # Store current RML as pending SRML for after lockout
-                if rightmost_lbl_1510 and box_1510 and not hasattr(self, 'pending_srml'):
-                    self.pending_srml = (rightmost_lbl_1510, box_1510, score_1510)
-                    print(f"Stored pending SRML: {rightmost_lbl_1510}")
-                
-                # Force SRML to None during backward movement
-                second_lbl_1510 = None
-                box_second_1510 = None
-                score_second_1510 = None
-
-            # NEW: Restore SRML after backward movement when RML changes
-            elif (hasattr(self, 'pending_srml') and self.pending_srml and 
-                current_rml_1510 != self.prev_rml_1510):
-                
-                stored_lbl, stored_box, stored_score = self.pending_srml
-                # Only restore if RML is different from stored SRML
-                if rightmost_lbl_1510 != stored_lbl:
-                    print(f"Restoring SRML from backward: {stored_lbl}")
-                    second_lbl_1510 = stored_lbl
-                    box_second_1510 = stored_box
-                    score_second_1510 = stored_score
-                
-                # Clear pending SRML
-                self.pending_srml = None
 
             # Check for significant backward movement in 3020
             if (current_3020_rml_x is not None and 
                 self.last_correct_3020_rml_x is not None and
-                current_3020_rml_x < self.last_correct_3020_rml_x -25):  # 10px tolerance
+                current_3020_rml_x < self.last_correct_3020_rml_x - 10):  # 10px tolerance
                 
                 print(f"3020 RML moved backwards! Blocking trades. Last: {self.last_correct_3020_rml_x}, Current: {current_3020_rml_x}")
-                self.backward_lockout_frames = 10
+                self.backward_lockout_frames = 15  # Lockout for 15 frames
                 self.rml_backward_lockout = True
                 
                 # save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
@@ -293,7 +270,7 @@ class DetectionWorker(QThread):
             print(f"1510 Second Label: {second_lbl_1510 or 'None'} with confidence {conf_1510_second}, Box: {box_second_1510 or 'None'}")
             #print(f"SRL Lockout: {self.srl_lockout_after_trade}")
             #print(f"Backward Lockout: {self.backward_lockout_frames > 0}")
-
+            
             if candle_boxes:
                 rightmost_candle = max(candle_boxes, key=lambda b: b[2])  # Find by rightmost x (b[2])
                 #print(f"Rightmost Candle Box: {rightmost_candle}")
@@ -343,11 +320,11 @@ class DetectionWorker(QThread):
             # BUY condition: 3020=HH and 1510=HL with candle above HL
             if (
                 not self.rml_backward_lockout and # Only proceed if RML hasn't moved backwards
-                rightmost_lbl_3020 == "HH"
+                (rightmost_lbl_3020 == "HH" or rightmost_lbl_3020 == "HL")
                 and rightmost_lbl_1510 == "HL"
                 and mode in ("buy", "both")
                 and current_time - self.last_buy_time >= self.buy_cooldown
-                and (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))
+                and (box_1510 and candle_boxes and (box_1510[0]+7 <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-7))
             ):
                 self.last_buy_time = current_time
                 self.buy_count += 1
@@ -357,18 +334,18 @@ class DetectionWorker(QThread):
                 self.pending_srl_trade = None  
                 
                 pyautogui.hotkey('ctrl','b')
-                #press_trade(isbuy=True)               
+                # press_trade(isbuy=True)               
                 print("BUY executed - HH + HL with candle above HL")
                 return decision
 
             # SELL condition: 3020=LL and 1510=LH with candle below LH
             elif (
                 not self.rml_backward_lockout and
-                rightmost_lbl_3020 == "LL"
+                (rightmost_lbl_3020 == "LL" or rightmost_lbl_3020 == "LH")
                 and rightmost_lbl_1510 == "LH"
                 and mode in ("sell", "both")
                 and current_time - self.last_sell_time >= self.sell_cooldown
-                and (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))
+                and (box_1510 and candle_boxes and (box_1510[0]+7 <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-7))
             ):
                 self.last_sell_time = current_time
                 self.sell_count += 1
@@ -378,7 +355,7 @@ class DetectionWorker(QThread):
                 self.pending_srl_trade = None  # Clear any pending SRL trade
                 
                 pyautogui.hotkey('ctrl','m')
-                #press_trade(isbuy=False)
+                # press_trade(isbuy=False)
                 print("SELL executed - LL + LH with candle below LH")
                 
                 return decision
@@ -391,7 +368,7 @@ class DetectionWorker(QThread):
                     and rightmost_lbl_1510 == "HL"
                     and mode in ("buy", "both")
                     and current_time - self.last_buy_time >= self.buy_cooldown
-                    and not (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus<= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))
+                    and not (box_1510 and candle_boxes and (box_1510[0]+7 <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-7))
                 ):
                     # Continuously update the pending trade while conditions hold
                     self.pending_srl_trade = ("BUY", "HL")
@@ -402,7 +379,7 @@ class DetectionWorker(QThread):
                     and rightmost_lbl_1510 == "LH"
                     and mode in ("sell", "both")
                     and current_time - self.last_sell_time >= self.sell_cooldown
-                    and not (box_1510 and candle_boxes and (box_1510[0]+self.plus_minus <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-self.plus_minus))):
+                    and not (box_1510 and candle_boxes and (box_1510[0]+7 <= (max(candle_boxes, key=lambda b: b[2])[0] + max(candle_boxes, key=lambda b: b[2])[2])//2 <= box_1510[2]-7))):
                     # Continuously update the pending trade while conditions hold
                     self.pending_srl_trade = ("SELL", "LH")
                     
@@ -430,7 +407,7 @@ class DetectionWorker(QThread):
                     self.srl_lockout_after_trade = True  # 🔒 LOCK SRL TRADES after SRL trade
                     
                     pyautogui.hotkey('ctrl','b')
-                    #press_trade(isbuy=True)                   
+                    # press_trade(isbuy=True)                   
                    
                     print(f"BUY executed - HH + SRL {current_srl_1510} (both labels changed)")
 
@@ -448,7 +425,7 @@ class DetectionWorker(QThread):
                     self.srl_lockout_after_trade = True  # 🔒 LOCK SRL TRADES after SRL trade
                    
                     pyautogui.hotkey('ctrl','m')
-                    #press_trade(isbuy=False)
+                    # press_trade(isbuy=False)
 
                     print(f"SELL executed - LL + SRL {current_srl_1510} (both labels changed)")
                     return decision
@@ -457,14 +434,12 @@ class DetectionWorker(QThread):
             elif current_rml_1510 != self.prev_rml_1510 and not self.rml_backward_lockout:
                 self.prev_rml_1510 = current_rml_1510
                 
-            save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                        box_1510, rightmost_lbl_1510, score_1510,
-                        box_second_1510, second_lbl_1510, score_second_1510,
-                        candle_boxes)
+            # save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
+            #             box_1510, rightmost_lbl_1510, score_1510,
+            #             box_second_1510, second_lbl_1510, score_second_1510,
+            #             candle_boxes)
 
-            
             return decision
-            
 
     def get_rightmost_label(self, boxes, labels, scores, min_conf=0.30):
             valid_labels = {"HH", "LL", "HL", "LH"}
@@ -599,58 +574,48 @@ class DetectionWorker(QThread):
                         "height": h
                     }
                     
-                    # Use ratios instead of fixed pixels
                     if platform.system() == "Windows":
-                        trim_right_ratio = 0.17           # 15% from right
-                        trim_bottom_ratio = 0.14          # 25% from bottom  
-                        trim_right_left_img_ratio = 0.17  # 10% from right of left image
-                        trim_top_ratio = 0.05             # 5% from top
-                        shift_right_ratio = 0.03          # 3% shift for right image
-                        trim_right_rimg_ratio = 0      # 25% from right of right image
+                        trim_right = 255            # right monitor
+                        trim_bottom = 230           # both monitors
+                        trim_right_left_img = 150   # left monitor
+                        trim_top = 45               # both monitors
+                        shift_right = 40            # right monitor
+                        trim_right_rimg = 400       # right monitor - THIS IS WHAT YOU WANT TO ADJUST
 
                     elif platform.system() == "Darwin":
-                        trim_right_ratio = 0.18
-                        trim_bottom_ratio = 0.34
-                        trim_right_left_img_ratio = 0.35
-                        trim_top_ratio = 0.1
-                        shift_right_ratio = 0.16
-                        trim_right_rimg_ratio = 0.18
+                        trim_right = 290
+                        trim_bottom = 300
+                        trim_right_left_img = 230
+                        trim_top = 60
+                        shift_right = 230
+                        trim_right_rimg = trim_right  # or set a specific value like 400
 
-                    # Calculate actual pixel values based on screen dimensions
-                    trim_top = int(h * trim_top_ratio)
-                    trim_bottom = int(h * trim_bottom_ratio)
-                    trim_right_left_img = int(w//2 * trim_right_left_img_ratio)
-                    shift_right = int(w * shift_right_ratio)
-                    trim_right = int(w * trim_right_ratio)
-                    trim_right_rimg = int(w * trim_right_rimg_ratio)
-
-                    # Left image crop
+                    # Left image crop (unchanged)
                     left_img = full[
                         trim_top : h - trim_bottom,
                         : (w // 2) - trim_right_left_img,
                         :
                     ]
 
-                    # Right image crop
+                    # FIXED: Right image crop - properly trim from the right side
                     right_img = full[
                         trim_top : h - trim_bottom,
-                        (w // 2 - shift_right) : (w - trim_right - trim_right_rimg),
+                        (w // 2 - shift_right) : (w - trim_right - trim_right_rimg),  # CHANGED THIS LINE
                         :
                     ]
 
+                    #  Resize for model 
+                    m32 = lambda v: ((v + 31) // 32) * 32
+                    left_sz = (m32(left_monitor['width']), m32(left_monitor['height']))
+                    right_sz = (m32(right_monitor['width']), m32(right_monitor['height']))
 
                     # Model predictions 
-                    if platform.system() == "Windows":
-                        fcandle_conf = 0.35
-                    else:
-                        fcandle_conf = 0.01
-
                     combined_images = [left_img, right_img]
                     all_results = self.model.predict(
                         source=combined_images,
                         verbose=False,
                         stream=False, 
-                        conf=fcandle_conf,  # Use lower confidence, filter candles later
+                        conf=0.01,  # Use lower confidence, filter candles later
                         iou=0.15,
                         imgsz=640,
                         device=device
@@ -674,14 +639,9 @@ class DetectionWorker(QThread):
                     merged_right_labels = [right_labels[i] for i in keep_right]
                     
                     #process candle results
-                    if platform.system() == "Darwin":
-                        scandle_conf = 0.1
-                    else:
-                        scandle_conf = 0.42
-                    
                     candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_results)
                     candle_boxes = [b for i, (b, l) in enumerate(zip(candle_boxes, candle_labels)) 
-                if l == "candle" and candle_scores[i] >= scandle_conf]
+                if l == "candle" and candle_scores[i] >= 0.1]
 
                     decision = self.analyze_candles_tm(
                         left_img, merged_left, merged_left_labels, left_conf,
@@ -817,13 +777,11 @@ class DetectionWorker(QThread):
 
 class MarketWorker:
     def __init__(self):      
+        #Ryan's Laptop
+        #self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
         
-        if platform.system() == "Darwin":
-            #Ryan's Laptop
-            self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt')
-        else:
-            #AP's main machine
-            self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
+        #AP's main machine
+        self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
 
         if torch.cuda.is_available():
             self.model.to('cuda')
@@ -845,7 +803,7 @@ class MarketWorker:
             height=self.height,
             total_frames=self.total_frames,
         )
-
+        
         self.detection_thread.finished.connect(self.on_finished)
         self.detection_thread.start()
 
