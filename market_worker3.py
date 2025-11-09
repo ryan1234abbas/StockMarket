@@ -663,7 +663,7 @@ class DetectionWorker(QThread):
                     if platform.system() == "Darwin":
                         scandle_conf = 0.1
                     else:
-                        scandle_conf = 0.42
+                        scandle_conf = 0.45
                     
                     candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_results)
                     candle_boxes = [b for i, (b, l) in enumerate(zip(candle_boxes, candle_labels)) 
