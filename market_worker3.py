@@ -451,8 +451,7 @@ class DetectionWorker(QThread):
                         candle_boxes)
 
             
-            return decision         
-
+            return decision
     def get_rightmost_label(self, boxes, labels, scores, min_conf=0.30):
             valid_labels = {"HH", "LL", "HL", "LH"}
 
