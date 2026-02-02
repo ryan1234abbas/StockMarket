@@ -198,34 +198,34 @@ class DetectionWorker(QThread):
 
     def _handle_yellow_label_detected(self, rightmost_lbl_1510, second_lbl_1510):
         if not self.yellow_label_active:
-            print("🟡 YELLOW LABEL DETECTED - PAUSING ALL TRADES")
+            print("YELLOW LABEL DETECTED - PAUSING ALL TRADES")
             self.last_valid_rml_1510_before_yellow = self.prev_rml_1510
             self.last_valid_srl_1510_before_yellow = self.prev_srl_1510
-            print(f"📝 Stored labels before yellow: RML={self.last_valid_rml_1510_before_yellow}, SRL={self.last_valid_srl_1510_before_yellow}")
+            print(f"Stored labels before yellow: RML={self.last_valid_rml_1510_before_yellow}, SRL={self.last_valid_srl_1510_before_yellow}")
         self.yellow_label_active = True
 
     def _handle_yellow_label_cleared(self, rightmost_lbl_1510, second_lbl_1510):
-        print("🟡 YELLOW LABEL CLEARED")
+        print("YELLOW LABEL CLEARED")
         self.yellow_label_active = False
         self.skip_first_label_after_yellow = True
         self.first_label_after_yellow_seen = rightmost_lbl_1510
         print(f"Current (first after yellow): RML={rightmost_lbl_1510}, SRL={second_lbl_1510}")
         print(f"Before yellow: RML={self.last_valid_rml_1510_before_yellow}, SRL={self.last_valid_srl_1510_before_yellow}")
-        print(f"🔒 SKIP MODE ACTIVE - Will skip trading until next RML change")
+        print(f"SKIP MODE ACTIVE - Will skip trading until next RML change")
         self.prev_rml_1510 = rightmost_lbl_1510
         self.prev_srl_1510 = second_lbl_1510
         self.srl_lockout_after_trade = False
 
     def _handle_skip_mode(self, rightmost_lbl_1510):
         if rightmost_lbl_1510 != self.first_label_after_yellow_seen:
-            print(f"✅ SKIP MODE ENDED - Label changed from {self.first_label_after_yellow_seen} to {rightmost_lbl_1510}")
-            print("🔄 Pattern signature cleared - ready for new trades")
+            print(f"SKIP MODE ENDED - Label changed from {self.first_label_after_yellow_seen} to {rightmost_lbl_1510}")
+            print("Pattern signature cleared - ready for new trades")
             self.skip_first_label_after_yellow = False
             self.first_label_after_yellow_seen = None
             self.last_executed_pattern = None
             return False
         else:
-            print(f"⏸️  SKIP MODE - Still on first label after yellow ({rightmost_lbl_1510}), blocking trades")
+            print(f"SKIP MODE - Still on first label after yellow ({rightmost_lbl_1510}), blocking trades")
             self.prev_rml_1510 = rightmost_lbl_1510
             return True
 
@@ -508,7 +508,7 @@ class DetectionWorker(QThread):
 
         yellow_detected = "yellow_label" in yellow_labels
         if yellow_detected:
-            print(f"🟡 Yellow label detected with confidence: {max([s for l, s in zip(yellow_labels, yellow_scores) if l == 'yellow_label'], default=0):.2f}")
+            print(f"Yellow label detected with confidence: {max([s for l, s in zip(yellow_labels, yellow_scores) if l == 'yellow_label'], default=0):.2f}")
 
         keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
         merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
