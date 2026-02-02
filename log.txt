@@ -3562,3 +3562,17 @@ Runtime: 1 min 36.79 sec
 Average runtime per frame: 0.38 seconds
 Final number of buys: 4
 Final number of sells: 0
+
+Time: 14:42  Date: 2026-02-02
+Runtime: 1 min 23.83 sec
+Average runtime per frame: 0.29 seconds
+Average inference time: 0.18 seconds
+Final number of buys: 4
+Final number of sells: 0
+
+Time: 14:46  Date: 2026-02-02
+Runtime: 1 min 34.75 sec
+Average runtime per frame: 0.31 seconds
+Average inference time: 0.19 seconds
+Final number of buys: 3
+Final number of sells: 0
