@@ -1,4 +1,0 @@
-train: /content/StockMarket/images/train
-val: /content/StockMarket/images/val
-nc: 4              
-names: ['LH', 'HL', 'LL', 'HH']
