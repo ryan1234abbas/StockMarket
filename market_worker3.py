@@ -809,7 +809,7 @@ class MarketWorker:
             self.model = YOLO('/Users/ryanabbas/Desktop/work/StockMarket/yolo_models/candles_labels/weights/best.pt')
         else:
             #AP's main machine
-            self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/runs/content/StockMarket/runs/detect2/new_model12/weights/best.pt")
+            self.model = YOLO("c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/yolo_models/candles_labels/weights/best.pt")
 
         if torch.cuda.is_available():
             self.model.to('cuda')
