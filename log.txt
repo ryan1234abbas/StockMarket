@@ -3616,3 +3616,185 @@ Average runtime per frame: 0.29 seconds
 Average inference time: 0.17 seconds
 Final number of buys: 3
 Final number of sells: 0
+
+Time: 19:16  Date: 2026-02-10
+Runtime: 5 min 0.49 sec
+Average runtime per frame: 0.43 seconds
+Average inference time: 0.25 seconds
+Final number of buys: 8
+Final number of sells: 0
+
+Time: 21:46  Date: 2026-02-10
+Runtime: 2 min 13.33 sec
+Average runtime per frame: 0.43 seconds
+Average inference time: 0.27 seconds
+Final number of buys: 0
+Final number of sells: 1
+
+Time: 14:32  Date: 2026-02-11
+Runtime: 0 min 29.40 sec
+Average runtime per frame: 0.20 seconds
+Average inference time: 0.13 seconds
+Final number of buys: 0
+Final number of sells: 0
+
+Time: 14:32  Date: 2026-02-11
+Runtime: 0 min 22.69 sec
+Average runtime per frame: 0.20 seconds
+Average inference time: 0.12 seconds
+Final number of buys: 0
+Final number of sells: 0
+
+Time: 14:36  Date: 2026-02-11
+Runtime: 1 min 2.88 sec
+Average runtime per frame: 0.31 seconds
+Average inference time: 0.19 seconds
+Final number of buys: 2
+Final number of sells: 0
+
+Time: 14:37  Date: 2026-02-11
+Runtime: 0 min 32.13 sec
+Average runtime per frame: 0.22 seconds
+Average inference time: 0.12 seconds
+Final number of buys: 2
+Final number of sells: 0
+
+Time: 14:41  Date: 2026-02-11
+Runtime: 0 min 42.15 sec
+Average runtime per frame: 0.24 seconds
+Average inference time: 0.13 seconds
+Final number of buys: 4
+Final number of sells: 0
+
+Time: 21:48  Date: 2026-02-11
+Runtime: 0 min 21.71 sec
+Average runtime per frame: 0.22 seconds
+Average inference time: 0.13 seconds
+Final number of buys: 2
+Final number of sells: 0
+
+Time: 21:49  Date: 2026-02-11
+Runtime: 0 min 13.97 sec
+Average runtime per frame: 0.24 seconds
+Average inference time: 0.14 seconds
+Final number of buys: 2
+Final number of sells: 0
+
+Time: 21:53  Date: 2026-02-11
+Runtime: 1 min 31.51 sec
+Average runtime per frame: 0.29 seconds
+Average inference time: 0.17 seconds
+Final number of buys: 0
+Final number of sells: 0
+
+Time: 22:00  Date: 2026-02-11
+Runtime: 0 min 28.64 sec
+Average runtime per frame: 0.21 seconds
+Average inference time: 0.13 seconds
+Final number of buys: 0
+Final number of sells: 0
+
+Time: 12:12  Date: 2026-02-12
+Runtime: 0 min 13.77 sec
+Average runtime per frame: 0.25 seconds
+Average inference time: 0.17 seconds
+Final number of buys: 0
+Final number of sells: 0
+
+Time: 12:24  Date: 2026-02-12
+Runtime: 0 min 16.09 sec
+Average runtime per frame: 0.21 seconds
+Average inference time: 0.14 seconds
+Final number of buys: 0
+Final number of sells: 0
+
+Time: 12:26  Date: 2026-02-12
+Runtime: 1 min 15.63 sec
+Average runtime per frame: 0.29 seconds
+Average inference time: 0.16 seconds
+Final number of buys: 7
+Final number of sells: 0
+
+Time: 12:31  Date: 2026-02-12
+Runtime: 0 min 42.57 sec
+Average runtime per frame: 0.24 seconds
+Average inference time: 0.14 seconds
+Final number of buys: 5
+Final number of sells: 0
+
+Time: 12:33  Date: 2026-02-12
+Runtime: 0 min 9.90 sec
+Average runtime per frame: 0.25 seconds
+Average inference time: 0.16 seconds
+Final number of buys: 2
+Final number of sells: 0
+
+Time: 12:36  Date: 2026-02-12
+Runtime: 0 min 8.56 sec
+Average runtime per frame: 0.27 seconds
+Average inference time: 0.17 seconds
+Final number of buys: 2
+Final number of sells: 0
+
+Time: 12:44  Date: 2026-02-12
+Runtime: 0 min 42.30 sec
+Average runtime per frame: 0.23 seconds
+Average inference time: 0.13 seconds
+Final number of buys: 3
+Final number of sells: 0
+
+Time: 17:01  Date: 2026-02-12
+Runtime: 0 min 4.47 sec
+Average runtime per frame: 0.41 seconds
+Average inference time: 0.31 seconds
+Final number of buys: 0
+Final number of sells: 0
+
+Time: 17:14  Date: 2026-02-12
+Runtime: 0 min 4.29 sec
+Average runtime per frame: 0.39 seconds
+Average inference time: 0.28 seconds
+Final number of buys: 1
+Final number of sells: 0
+
+Time: 17:15  Date: 2026-02-12
+Runtime: 0 min 6.75 sec
+Average runtime per frame: 0.28 seconds
+Average inference time: 0.18 seconds
+Final number of buys: 1
+Final number of sells: 0
+
+Time: 17:27  Date: 2026-02-12
+Runtime: 0 min 4.37 sec
+Average runtime per frame: 0.36 seconds
+Average inference time: 0.26 seconds
+Final number of buys: 1
+Final number of sells: 0
+
+Time: 17:30  Date: 2026-02-12
+Runtime: 0 min 3.67 sec
+Average runtime per frame: 0.41 seconds
+Average inference time: 0.29 seconds
+Final number of buys: 1
+Final number of sells: 0
+
+Time: 17:33  Date: 2026-02-12
+Runtime: 0 min 33.53 sec
+Average runtime per frame: 0.21 seconds
+Average inference time: 0.12 seconds
+Final number of buys: 2
+Final number of sells: 0
+
+Time: 17:36  Date: 2026-02-12
+Runtime: 1 min 40.97 sec
+Average runtime per frame: 0.29 seconds
+Average inference time: 0.18 seconds
+Final number of buys: 0
+Final number of sells: 4
+
+Time: 17:50  Date: 2026-02-12
+Runtime: 13 min 10.85 sec
+Average runtime per frame: 0.33 seconds
+Average inference time: 0.19 seconds
+Final number of buys: 10
+Final number of sells: 13
