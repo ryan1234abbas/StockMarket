@@ -12,7 +12,7 @@ import platform
 from collections import deque
 from datetime import date, datetime
 import torch
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 # GPU configuration
 device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
@@ -37,7 +37,6 @@ class ParallelInferenceRunner:
     def predict_parallel(self, left_img, right_img):
         """Run inferences in parallel"""
         with ThreadPoolExecutor(max_workers=2) as executor:
-            # Submit both inference tasks
             future_left = executor.submit(
                 self.models['candles_labels'].predict,
                 source=[left_img, right_img],
@@ -54,13 +53,12 @@ class ParallelInferenceRunner:
                 source=right_img,
                 verbose=False,
                 stream=False,
-                conf=0.3,
+                conf=0.1,
                 iou=0.15,
                 imgsz=640,
                 device=self.device
             )
             
-            # Wait for both to complete
             all_results = future_left.result()
             yellow_results = future_yellow.result()
             
@@ -81,28 +79,13 @@ class DetectionWorker(QThread):
         self.total_frames = total_frames
         self.frame_count = 0
         self.running = True
-        self.prev_box_dims = None
-        self.prev_trade_signal = None
-        self.counter = 0
         self.buy_count = 0
         self.sell_count = 0
-        self.prev_lbl_3020 = None
-        self.prev_lbl_1510 = None
-        self.last_trade_time = 0
-        self.cached_buy_btn = None
-        self.cached_sell_btn = None
         self.last_buy_time = 0
         self.last_sell_time = 0
-        self.curr_1510 = None
-        self.curr_box_1510 = None
-        self.last_triggered_box = None
-        self.pending_srl_trade = None
         self.mode = mode
         self.prev_rml_1510 = None
         self.prev_srl_1510 = None
-        self.last_correct_srl_label = None
-        self.last_correct_srl_x = None
-        self.last_correct_rml_x = None
         self.srl_lockout_after_trade = False
         self.last_correct_3020_rml_x = None
         self.is_first_frame = True
@@ -114,7 +97,7 @@ class DetectionWorker(QThread):
         self.pending_trade = None
         self.trade_timeout = 2.0
         
-        # Yellow label detection states (from Model 1)
+        # Yellow label detection states
         self.yellow_label_active = False
         self.last_valid_rml_1510_before_yellow = None
         self.last_valid_srl_1510_before_yellow = None
@@ -122,7 +105,7 @@ class DetectionWorker(QThread):
         self.skip_first_label_after_yellow = False
         self.first_label_after_yellow_seen = None
 
-        # Change based on speed of market and desired buy/sell frequency
+        # Cooldowns
         self.buy_cooldown = 4.5
         self.sell_cooldown = 4.5
         
@@ -131,138 +114,7 @@ class DetectionWorker(QThread):
             'total_frames': 0,
             'total_time': 0,
             'avg_inference_time': 0,
-            'avg_processing_time': 0
         }
-
-    def _get_two_rightmost(self, boxes, labels, scores, min_conf=0.30):
-        """Get top 2 rightmost labels"""
-        valid_labels = {"LH", "HL", "HH", "LL"}
-        if not boxes or not labels or not scores:
-            return None, None
-        entries = [
-            (lbl, box, score)
-            for box, lbl, score in zip(boxes, labels, scores)
-            if score >= min_conf and lbl in valid_labels
-        ]
-        if not entries:
-            return None, None
-        entries.sort(key=lambda x: x[1][0], reverse=True)
-        first = entries[0]
-        second = entries[1] if len(entries) > 1 else (None, None, None)
-        return first, second
-
-    def _get_pattern_signature(self, lbl_3020, lbl_1510, x_pos, is_srl=False):
-        """Create unique pattern signature for duplicate detection"""
-        if not lbl_3020 or not lbl_1510 or x_pos is None:
-            return None
-        # Round x to nearest 20px to create position buckets
-        x_bucket = round(x_pos / 20) * 20
-        trade_type = "SRL" if is_srl else "RML"
-        return (lbl_3020, lbl_1510, x_bucket, trade_type)
-
-    def _handle_yellow_label_detected(self, rightmost_lbl_1510, second_lbl_1510):
-        """Handle yellow label detection - pause all trades"""
-        if not self.yellow_label_active:
-            print("YELLOW LABEL DETECTED - PAUSING ALL TRADES")
-            self.last_valid_rml_1510_before_yellow = self.prev_rml_1510
-            self.last_valid_srl_1510_before_yellow = self.prev_srl_1510
-            print(f"Stored labels before yellow: RML={self.last_valid_rml_1510_before_yellow}, SRL={self.last_valid_srl_1510_before_yellow}")
-        self.yellow_label_active = True
-
-    def _handle_yellow_label_cleared(self, rightmost_lbl_1510, second_lbl_1510):
-        """Handle yellow label cleared - enter skip mode"""
-        print("YELLOW LABEL CLEARED")
-        self.yellow_label_active = False
-        self.skip_first_label_after_yellow = True
-        self.first_label_after_yellow_seen = rightmost_lbl_1510
-        print(f"Current (first after yellow): RML={rightmost_lbl_1510}, SRL={second_lbl_1510}")
-        print(f"Before yellow: RML={self.last_valid_rml_1510_before_yellow}, SRL={self.last_valid_srl_1510_before_yellow}")
-        print(f"SKIP MODE ACTIVE - Will skip trading until next RML change")
-        self.prev_rml_1510 = rightmost_lbl_1510
-        self.prev_srl_1510 = second_lbl_1510
-        self.srl_lockout_after_trade = False
-
-    def _handle_skip_mode(self, rightmost_lbl_1510):
-        """Handle skip mode after yellow label"""
-        if rightmost_lbl_1510 != self.first_label_after_yellow_seen:
-            print(f"SKIP MODE ENDED - Label changed from {self.first_label_after_yellow_seen} to {rightmost_lbl_1510}")
-            print("Pattern signature cleared - ready for new trades")
-            self.skip_first_label_after_yellow = False
-            self.first_label_after_yellow_seen = None
-            self.last_executed_pattern = None
-            return False
-        else:
-            print(f"SKIP MODE - Still on first label after yellow ({rightmost_lbl_1510}), blocking trades")
-            self.prev_rml_1510 = rightmost_lbl_1510
-            return True
-
-    def _save_debug_images(self, left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                          box_1510, rightmost_lbl_1510, score_1510,
-                          box_second_1510, second_lbl_1510, score_second_1510,
-                          candle_boxes, yellow_detected=False):
-        """Save debug images with labels AND candles"""
-        debug_3020, debug_1510 = left_img.copy(), right_img.copy()
-
-        # Draw 3020 label (green)
-        if box_3020:
-            x0, y0, x1, y1 = box_3020
-            cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
-            cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})",
-                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-        # Draw 1510 RML label (red)
-        if box_1510 and rightmost_lbl_1510:
-            x0, y0, x1, y1 = box_1510
-            cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 0, 255), 2)
-            cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})",
-                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-
-        # Draw 1510 SRL label (blue)
-        if box_second_1510 and second_lbl_1510:
-            x0, y0, x1, y1 = box_second_1510
-            cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 2)
-            cv2.putText(debug_1510, f"{second_lbl_1510} ({score_second_1510:.2f})",
-                        (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-
-        # DRAW CANDLES on 1510 image (yellow boxes)
-        if candle_boxes:
-            for i, candle_box in enumerate(candle_boxes):
-                cx0, cy0, cx1, cy1 = candle_box
-                cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 255, 255), 2)
-                
-                # Mark the rightmost candle with special color
-                rightmost_candle = max(candle_boxes, key=lambda b: b[2])
-                if candle_box == rightmost_candle:
-                    cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 255, 0), 3)
-                    candle_center = (cx0 + cx1) // 2
-                    cv2.putText(debug_1510, f"RMC: {candle_center}",
-                                (cx0, cy0 - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-                
-                # Draw candle center point
-                candle_center = (cx0 + cx1) // 2
-                cv2.circle(debug_1510, (candle_center, (cy0 + cy1) // 2), 3, (0, 0, 255), -1)
-        
-        # Draw alignment lines if we have both label and candles
-        if box_1510 and candle_boxes:
-            lx0, ly0, lx1, ly1 = box_1510
-            rightmost_candle = max(candle_boxes, key=lambda b: b[2])
-            cx0, cy0, cx1, cy1 = rightmost_candle
-            candle_center = (cx0 + cx1) // 2
-
-            # Check and show alignment
-            aligned = lx0+self.plus_minus <= candle_center <= lx1-self.plus_minus
-            alignment_text = f"Aligned: {aligned}"
-            cv2.putText(debug_1510, alignment_text,
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if aligned else (0, 0, 255), 2)
-        
-        # Mark if yellow label detected
-        if yellow_detected:
-            cv2.putText(debug_1510, "YELLOW DETECTED - TRADES PAUSED",
-                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        
-        os.makedirs("dummy", exist_ok=True)
-        cv2.imwrite("dummy/debug_3020.png", debug_3020)
-        cv2.imwrite("dummy/debug_1510.png", debug_1510)
 
     def analyze_candles_tm(self, left_img, boxes_3020, labels_3020, scores_3020,
                           right_img, boxes_1510, labels_1510, scores_1510,
@@ -273,25 +125,107 @@ class DetectionWorker(QThread):
         current_time = time.time()
         valid_labels = {"LH", "HL", "HH", "LL"}
 
-        # Clear timeout trades
+        # Helper: get top 2 rightmost labels (INCLUDING yellow)
+        def get_two_rightmost(boxes, labels, scores, min_conf=0.30):
+            if not boxes or not labels or not scores:
+                return None, None
+            
+            valid_labels_set = {"LH", "HL", "HH", "LL", "yellow_label"}
+            
+            # DEBUG: Check alignment
+            if len(boxes) != len(labels) or len(boxes) != len(scores):
+                print(f"  MISMATCH: boxes={len(boxes)}, labels={len(labels)}, scores={len(scores)}")
+            
+            entries = [
+                (lbl, box, score)
+                for box, lbl, score in zip(boxes, labels, scores)
+                if score >= min_conf and lbl in valid_labels_set
+            ]
+            if not entries:
+                return None, None
+            entries.sort(key=lambda x: x[1][0], reverse=True)
+            first = entries[0]
+            second = entries[1] if len(entries) > 1 else (None, None, None)
+            return first, second
+        
+        def save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
+                                        box_1510, rightmost_lbl_1510, score_1510,
+                                        box_second_1510, second_lbl_1510, score_second_1510,
+                                        candle_boxes, yellow_detected):
+            debug_3020, debug_1510 = left_img.copy(), right_img.copy()
+
+            if box_3020:
+                x0, y0, x1, y1 = box_3020
+                cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
+                cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})",
+                            (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+            if box_1510 and rightmost_lbl_1510:
+                x0, y0, x1, y1 = box_1510
+                cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 0, 255), 2)
+                cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})",
+                            (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+            if box_second_1510 and second_lbl_1510:
+                x0, y0, x1, y1 = box_second_1510
+                cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 2)
+                cv2.putText(debug_1510, f"{second_lbl_1510} ({score_second_1510:.2f})",
+                            (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+
+            if candle_boxes:
+                for i, candle_box in enumerate(candle_boxes):
+                    cx0, cy0, cx1, cy1 = candle_box
+                    cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 255, 255), 2)
+                    
+                    rightmost_candle = max(candle_boxes, key=lambda b: b[2])
+                    if candle_box == rightmost_candle:
+                        cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 255, 0), 3)
+                        candle_center = (cx0 + cx1) // 2
+                        cv2.putText(debug_1510, f"RMC: {candle_center}",
+                                    (cx0, cy0 - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                    
+                    candle_center = (cx0 + cx1) // 2
+                    cv2.circle(debug_1510, (candle_center, (cy0 + cy1) // 2), 3, (0, 0, 255), -1)
+            
+            if box_1510 and candle_boxes:
+                lx0, ly0, lx1, ly1 = box_1510
+                rightmost_candle = max(candle_boxes, key=lambda b: b[2])
+                cx0, cy0, cx1, cy1 = rightmost_candle
+                candle_center = (cx0 + cx1) // 2
+
+                aligned = lx0+self.plus_minus <= candle_center <= lx1-self.plus_minus
+                alignment_text = f"Aligned: {aligned}"
+                cv2.putText(debug_1510, alignment_text,
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if aligned else (0, 0, 255), 2)
+            
+            if yellow_detected:
+                cv2.putText(debug_1510, "YELLOW LABEL DETECTED - TRADES PAUSED",
+                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            
+            os.makedirs("dummy", exist_ok=True)
+            cv2.imwrite("dummy/debug_3020.png", debug_3020)
+            cv2.imwrite("dummy/debug_1510.png", debug_1510)
+        
+        def get_pattern_signature(lbl_3020, lbl_1510, x_pos, is_srl=False):
+            if not lbl_3020 or not lbl_1510 or x_pos is None:
+                return None
+            x_bucket = round(x_pos / 20) * 20
+            trade_type = "SRL" if is_srl else "RML"
+            return (lbl_3020, lbl_1510, x_bucket, trade_type)
+
         if self.pending_trade and current_time - self.pending_trade[1] > self.trade_timeout:
-            print(f"Trade timeout - clearing stuck {self.pending_trade[0]} trade")
             self.pending_trade = None
 
-        # Get rightmost for 3020
+        # Get RML 3020
         rightmost_lbl_3020, box_3020, score_3020 = self.get_rightmost_label(
             boxes_3020, labels_3020, scores_3020, min_conf=0.30
         )
         if rightmost_lbl_3020 not in valid_labels:
             rightmost_lbl_3020, box_3020, score_3020 = None, None, None
 
-        # Check for yellow label detection
-        yellow_detected = "yellow_label" in labels_1510
-
-        # Get rightmost and second-rightmost for 1510
-        first_1510, second_1510 = self._get_two_rightmost(
-            boxes_1510, labels_1510, scores_1510, min_conf=0.30
-        )
+        # Get RML 1510 and SRML 1510 (including yellow)
+        first_1510, second_1510 = get_two_rightmost(boxes_1510, labels_1510, scores_1510, min_conf=0.30)
+        
         if first_1510:
             rightmost_lbl_1510, box_1510, score_1510 = first_1510
             current_1510_rml_x = box_1510[0]
@@ -304,28 +238,56 @@ class DetectionWorker(QThread):
         else:
             second_lbl_1510, box_second_1510, score_second_1510 = None, None, None
 
-        # YELLOW LABEL HANDLING (from Model 1)
+        print(f"3020: {rightmost_lbl_3020 or 'None'}")
+        print(f"1510 RML: {rightmost_lbl_1510 or 'None'}")
+        print(f"1510 SRML: {second_lbl_1510 or 'None'}")
+
+        # Yellow detection: block if yellow is RML or SRML
+        yellow_detected = (rightmost_lbl_1510 == "yellow_label") or (second_lbl_1510 == "yellow_label")
+
         if yellow_detected:
-            self._handle_yellow_label_detected(rightmost_lbl_1510, second_lbl_1510)
-            self._save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                  None, None, None, None, None, None, candle_boxes, yellow_detected=True)
+            print("YELLOW LABEL DETECTED - BLOCKING ALL TRADES")
+            
+            if not self.yellow_label_active:
+                self.last_valid_rml_1510_before_yellow = self.prev_rml_1510
+                self.last_valid_srl_1510_before_yellow = self.prev_srl_1510
+            
+            self.yellow_label_active = True
+            
+            if rightmost_lbl_1510 != "yellow_label" and rightmost_lbl_1510:
+                self.prev_rml_1510 = rightmost_lbl_1510
+            if second_lbl_1510 != "yellow_label" and second_lbl_1510:
+                self.prev_srl_1510 = second_lbl_1510
+            
+            save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
+                            None, None, None, None, None, None, candle_boxes, yellow_detected=True)
             return None
 
-        # Yellow label cleared
+        # Yellow cleared
         if not yellow_detected and self.yellow_label_active:
-            self._handle_yellow_label_cleared(rightmost_lbl_1510, second_lbl_1510)
+            print("YELLOW CLEARED - RESUMING")
+            self.yellow_label_active = False
+            self.skip_first_label_after_yellow = True
+            self.first_label_after_yellow_seen = rightmost_lbl_1510
+            self.prev_rml_1510 = rightmost_lbl_1510
+            self.prev_srl_1510 = second_lbl_1510
             return None
 
-        # Skip mode handling
+        # Skip first label after yellow
         if self.skip_first_label_after_yellow:
-            if self._handle_skip_mode(rightmost_lbl_1510):
+            if rightmost_lbl_1510 != self.first_label_after_yellow_seen:
+                self.skip_first_label_after_yellow = False
+                self.first_label_after_yellow_seen = None
+                self.last_executed_pattern = None
+            else:
+                self.prev_rml_1510 = rightmost_lbl_1510
                 self.prev_srl_1510 = second_lbl_1510
                 return None
-        
+
         # Define current_3020_rml_x
         current_3020_rml_x = box_3020[0] if box_3020 else None
 
-        # === BACKWARD MOVEMENT DETECTION (from Model 2) ===
+        # Backward movement detection
         if self.is_first_frame:
             self.is_first_frame = False
             if current_3020_rml_x is not None:
@@ -334,23 +296,19 @@ class DetectionWorker(QThread):
                 self.last_rml_1510_x = current_1510_rml_x
             return None
 
-        # Handle backward lockout countdown
         if self.backward_lockout_frames > 0:
             self.backward_lockout_frames -= 1
             if self.backward_lockout_frames == 0:
                 self.rml_backward_lockout = False
-                # CLEAR pattern signature when backward movement ends
-                self.last_executed_pattern = None
-                print("Backward movement lockout expired - pattern signature cleared")
+                if not self.skip_first_label_after_yellow:
+                    self.last_executed_pattern = None
             else:
-                print(f"Backward lockout active: {self.backward_lockout_frames} frames remaining")
                 return None
         
-        # SRML handling during backward movement
+        current_rml_1510 = rightmost_lbl_1510
         if self.rml_backward_lockout:
             if rightmost_lbl_1510 and box_1510 and not hasattr(self, 'pending_srml'):
                 self.pending_srml = (rightmost_lbl_1510, box_1510, score_1510)
-                print(f"Stored pending SRML: {rightmost_lbl_1510}")
             
             second_lbl_1510 = None
             box_second_1510 = None
@@ -361,67 +319,48 @@ class DetectionWorker(QThread):
             
             stored_lbl, stored_box, stored_score = self.pending_srml
             if rightmost_lbl_1510 != stored_lbl:
-                print(f"Restoring SRML from backward: {stored_lbl}")
                 second_lbl_1510 = stored_lbl
                 box_second_1510 = stored_box
                 score_second_1510 = stored_score
             
             self.pending_srml = None
 
-        # Check for backward movement in 3020
+        # Check backward movement 3020
         if (current_3020_rml_x is not None and 
             self.last_correct_3020_rml_x is not None and
             current_3020_rml_x < self.last_correct_3020_rml_x - 25):
             
-            print(f"3020 RML moved backwards! Last: {self.last_correct_3020_rml_x}, Current: {current_3020_rml_x}")
             self.backward_lockout_frames = 10
             self.rml_backward_lockout = True
             self.last_correct_3020_rml_x = current_3020_rml_x
             return None
 
-        # Check for backward movement in 1510
+        # Check backward movement 1510
         if (current_1510_rml_x is not None and 
             self.last_rml_1510_x is not None and
             current_1510_rml_x < self.last_rml_1510_x - 10):
             
-            print(f"1510 RML moved backwards! Last: {self.last_rml_1510_x}, Current: {current_1510_rml_x}")
             self.backward_lockout_frames = 5
             self.rml_backward_lockout = True
             self.last_rml_1510_x = current_1510_rml_x
             return None
 
-        # Update normal tracking
         if current_3020_rml_x is not None:
             self.last_correct_3020_rml_x = current_3020_rml_x
         if current_1510_rml_x is not None:
             self.last_rml_1510_x = current_1510_rml_x
 
-        # Current labels for SRL logic
-        current_rml_1510 = rightmost_lbl_1510
         current_srl_1510 = second_lbl_1510
 
-        # RESET SRL LOCKOUT when RML changes (pattern evolved)
+        # Reset SRL lockout when RML changes
         if (current_rml_1510 != self.prev_rml_1510 and not self.rml_backward_lockout):
             self.srl_lockout_after_trade = False
-            # CLEAR pattern signature when RML changes (new pattern available)
-            self.last_executed_pattern = None
-            print("SRL lockout reset - RML changed - pattern signature cleared")
-            
-        # Print detection info
-        conf_3020 = f"{int(round(score_3020 * 100))}%" if score_3020 else "N/A"
-        conf_1510 = f"{int(round(score_1510 * 100))}%" if score_1510 else "N/A"
-        conf_1510_second = f"{int(round(score_second_1510 * 100))}%" if score_second_1510 else "N/A"
-
-        print(f"3020 Label: {rightmost_lbl_3020 or 'None'} with confidence {conf_3020}")
-        print(f"1510 Label: {rightmost_lbl_1510 or 'None'} with confidence {conf_1510}, Box: {box_1510 or 'None'}")
-        print(f"1510 Second Label: {second_lbl_1510 or 'None'} with confidence {conf_1510_second}, Box: {box_second_1510 or 'None'}")
-
-        if not candle_boxes:
-            print("Rightmost Candle: None")
-            
+            if not self.skip_first_label_after_yellow:
+                self.last_executed_pattern = None
+        
         # === PRIMARY TRADE: RML with candle alignment ===
         
-        # BUY condition with pattern duplicate check
+        # BUY condition
         if (not self.rml_backward_lockout and 
             not self.pending_trade and
             rightmost_lbl_3020 == "HH"
@@ -430,78 +369,68 @@ class DetectionWorker(QThread):
             and current_time - self.last_buy_time >= self.buy_cooldown
             and box_1510 and candle_boxes):
             
-            # Check candle alignment
             rightmost_candle = max(candle_boxes, key=lambda b: b[2])
             candle_center = (rightmost_candle[0] + rightmost_candle[2]) // 2
             candle_aligned = box_1510[0] + self.plus_minus <= candle_center <= box_1510[2] - self.plus_minus
             
             if candle_aligned:
-                # Generate pattern signature
-                pattern_sig = self._get_pattern_signature(rightmost_lbl_3020, rightmost_lbl_1510, current_1510_rml_x, is_srl=False)
+                pattern_sig = get_pattern_signature(rightmost_lbl_3020, rightmost_lbl_1510, current_1510_rml_x, is_srl=False)
                 
-                # Check if this is the SAME pattern we just traded
                 if pattern_sig == self.last_executed_pattern:
-                    print(f"DUPLICATE PATTERN BLOCKED: {pattern_sig}")
-                else:
-                    # NEW PATTERN - Execute trade
-                    self.pending_trade = ("BUY", current_time)
-                    self.last_buy_time = current_time
-                    self.buy_count += 1
-                    decision = "BUY"
-                    self.srl_lockout_after_trade = True
-                    self.pending_srl_trade = None
-                    self.last_executed_pattern = pattern_sig
-                    
-                    pyautogui.hotkey('ctrl','b')
-                    print(f"BUY executed - Pattern: {pattern_sig}")
-                    
-                    self._save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                          box_1510, rightmost_lbl_1510, score_1510,
-                                          box_second_1510, second_lbl_1510, score_second_1510,
-                                          candle_boxes, yellow_detected)
-                    return decision
+                    return None
+                
+                self.pending_trade = ("BUY", current_time)
+                self.last_buy_time = current_time
+                self.buy_count += 1
+                decision = "BUY"
+                self.srl_lockout_after_trade = True
+                self.pending_srl_trade = None
+                self.last_executed_pattern = pattern_sig
+                
+                pyautogui.hotkey('ctrl','b')
+                
+                save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
+                                box_1510, rightmost_lbl_1510, score_1510,
+                                box_second_1510, second_lbl_1510, score_second_1510,
+                                candle_boxes, yellow_detected)
+                return decision
 
-        # SELL condition with pattern duplicate check
+        # SELL condition
         elif (not self.rml_backward_lockout and
-              not self.pending_trade and
-              rightmost_lbl_3020 == "LL"
-              and rightmost_lbl_1510 == "LH"
-              and mode in ("sell", "both")
-              and current_time - self.last_sell_time >= self.sell_cooldown
-              and box_1510 and candle_boxes):
+            not self.pending_trade and
+            rightmost_lbl_3020 == "LL"
+            and rightmost_lbl_1510 == "LH"
+            and mode in ("sell", "both")
+            and current_time - self.last_sell_time >= self.sell_cooldown
+            and box_1510 and candle_boxes):
             
-            # Check candle alignment
             rightmost_candle = max(candle_boxes, key=lambda b: b[2])
             candle_center = (rightmost_candle[0] + rightmost_candle[2]) // 2
             candle_aligned = box_1510[0] + self.plus_minus <= candle_center <= box_1510[2] - self.plus_minus
             
             if candle_aligned:
-                # Generate pattern signature
-                pattern_sig = self._get_pattern_signature(rightmost_lbl_3020, rightmost_lbl_1510, current_1510_rml_x, is_srl=False)
+                pattern_sig = get_pattern_signature(rightmost_lbl_3020, rightmost_lbl_1510, current_1510_rml_x, is_srl=False)
                 
-                # Check if this is the SAME pattern we just traded
                 if pattern_sig == self.last_executed_pattern:
-                    print(f"DUPLICATE PATTERN BLOCKED: {pattern_sig}")
-                else:
-                    # NEW PATTERN - Execute trade
-                    self.pending_trade = ("SELL", current_time)
-                    self.last_sell_time = current_time
-                    self.sell_count += 1
-                    decision = "SELL"
-                    self.srl_lockout_after_trade = True
-                    self.pending_srl_trade = None
-                    self.last_executed_pattern = pattern_sig
-                    
-                    pyautogui.hotkey('ctrl','m')
-                    print(f"SELL executed - Pattern: {pattern_sig}")
-                    
-                    self._save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                          box_1510, rightmost_lbl_1510, score_1510,
-                                          box_second_1510, second_lbl_1510, score_second_1510,
-                                          candle_boxes, yellow_detected)
-                    return decision
+                    return None
+                
+                self.pending_trade = ("SELL", current_time)
+                self.last_sell_time = current_time
+                self.sell_count += 1
+                decision = "SELL"
+                self.srl_lockout_after_trade = True
+                self.pending_srl_trade = None
+                self.last_executed_pattern = pattern_sig
+                
+                pyautogui.hotkey('ctrl','m')
+                
+                save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
+                                box_1510, rightmost_lbl_1510, score_1510,
+                                box_second_1510, second_lbl_1510, score_second_1510,
+                                candle_boxes, yellow_detected)
+                return decision
 
-        # === SRL BACKUP TRADE with pattern duplicate check ===
+        # === SRL BACKUP TRADE ===
         if (not self.rml_backward_lockout and
             not self.pending_trade and
             not self.srl_lockout_after_trade and
@@ -509,85 +438,71 @@ class DetectionWorker(QThread):
             current_srl_1510 != self.prev_srl_1510 and
             current_rml_1510 and current_srl_1510):
             
-            # Update tracking
             self.prev_rml_1510 = current_rml_1510
             self.prev_srl_1510 = current_srl_1510
             
-            # SRL BUY condition
+            # SRL BUY
             if (current_srl_1510 == "HL" and 
                 rightmost_lbl_3020 == "HH" and 
                 mode in ("buy", "both") and
                 current_time - self.last_buy_time >= self.buy_cooldown):
                 
-                # Generate SRL pattern signature using SECOND label's position
                 srl_x = box_second_1510[0] if box_second_1510 else None
-                pattern_sig = self._get_pattern_signature(rightmost_lbl_3020, current_srl_1510, srl_x, is_srl=True)
+                pattern_sig = get_pattern_signature(rightmost_lbl_3020, current_srl_1510, srl_x, is_srl=True)
                 
-                # Check if this is the SAME SRL pattern we just traded
                 if pattern_sig == self.last_executed_pattern:
-                    print(f"DUPLICATE SRL PATTERN BLOCKED: {pattern_sig}")
-                else:
-                    # NEW SRL PATTERN - Execute trade
-                    self.pending_trade = ("BUY", current_time)
-                    self.last_buy_time = current_time
-                    self.buy_count += 1
-                    decision = "BUY"
-                    self.srl_lockout_after_trade = True
-                    self.last_executed_pattern = pattern_sig
-                    
-                    pyautogui.hotkey('ctrl','b')
-                    print(f"BUY executed - SRL Pattern: {pattern_sig}")
-                    
-                    self._save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                          box_1510, rightmost_lbl_1510, score_1510,
-                                          box_second_1510, second_lbl_1510, score_second_1510,
-                                          candle_boxes, yellow_detected)
-                    return decision
+                    return None
+                
+                self.pending_trade = ("BUY", current_time)
+                self.last_buy_time = current_time
+                self.buy_count += 1
+                decision = "BUY"
+                self.srl_lockout_after_trade = True
+                self.last_executed_pattern = pattern_sig
+                
+                pyautogui.hotkey('ctrl','b')
+                
+                save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
+                                box_1510, rightmost_lbl_1510, score_1510,
+                                box_second_1510, second_lbl_1510, score_second_1510,
+                                candle_boxes, yellow_detected)
+                return decision
 
-            # SRL SELL condition
+            # SRL SELL
             elif (current_srl_1510 == "LH" and 
-                  rightmost_lbl_3020 == "LL" and 
-                  mode in ("sell", "both") and
-                  current_time - self.last_sell_time >= self.sell_cooldown):
+                rightmost_lbl_3020 == "LL" and 
+                mode in ("sell", "both") and
+                current_time - self.last_sell_time >= self.sell_cooldown):
                 
-                # Generate SRL pattern signature using SECOND label's position
                 srl_x = box_second_1510[0] if box_second_1510 else None
-                pattern_sig = self._get_pattern_signature(rightmost_lbl_3020, current_srl_1510, srl_x, is_srl=True)
+                pattern_sig = get_pattern_signature(rightmost_lbl_3020, current_srl_1510, srl_x, is_srl=True)
                 
-                # Check if this is the SAME SRL pattern we just traded
                 if pattern_sig == self.last_executed_pattern:
-                    print(f"DUPLICATE SRL PATTERN BLOCKED: {pattern_sig}")
-                else:
-                    # NEW SRL PATTERN - Execute trade
-                    self.pending_trade = ("SELL", current_time)
-                    self.last_sell_time = current_time
-                    self.sell_count += 1
-                    decision = "SELL"
-                    self.srl_lockout_after_trade = True
-                    self.last_executed_pattern = pattern_sig
+                    return None
                 
-                    pyautogui.hotkey('ctrl','m')
-                    print(f"SELL executed - SRL Pattern: {pattern_sig}")
-                    
-                    self._save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                          box_1510, rightmost_lbl_1510, score_1510,
-                                          box_second_1510, second_lbl_1510, score_second_1510,
-                                          candle_boxes, yellow_detected)
-                    return decision
+                self.pending_trade = ("SELL", current_time)
+                self.last_sell_time = current_time
+                self.sell_count += 1
+                decision = "SELL"
+                self.srl_lockout_after_trade = True
+                self.last_executed_pattern = pattern_sig
+            
+                pyautogui.hotkey('ctrl','m')
+                
+                save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
+                                box_1510, rightmost_lbl_1510, score_1510,
+                                box_second_1510, second_lbl_1510, score_second_1510,
+                                candle_boxes, yellow_detected)
+                return decision
 
-        # Update RML tracking if only RML changed (SRL stayed same - just maturing)
         elif current_rml_1510 != self.prev_rml_1510 and not self.rml_backward_lockout:
             self.prev_rml_1510 = current_rml_1510
-
-        # Update SRL tracking
-        if current_srl_1510 != self.prev_srl_1510:
-            self.prev_srl_1510 = current_srl_1510
             
-        self._save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                              box_1510, rightmost_lbl_1510, score_1510,
-                              box_second_1510, second_lbl_1510, score_second_1510,
-                              candle_boxes, yellow_detected)
-        
+        save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
+                    box_1510, rightmost_lbl_1510, score_1510,
+                    box_second_1510, second_lbl_1510, score_second_1510,
+                    candle_boxes, yellow_detected)
+
         return decision
 
     def get_rightmost_label(self, boxes, labels, scores, min_conf=0.30):
@@ -596,7 +511,6 @@ class DetectionWorker(QThread):
         if not boxes or not labels or not scores:
             return None, None, None
 
-        # Only keep boxes with valid labels + above confidence
         filtered = [
             (b, l, s) for b, l, s in zip(boxes, labels, scores)
             if l in valid_labels and s >= min_conf
@@ -605,16 +519,13 @@ class DetectionWorker(QThread):
         if not filtered:
             return None, None, None
 
-        # Pick the rightmost among valid ones
         box, label, score = max(filtered, key=lambda x: x[0][0])
         return label, box, score
 
     def run(self):
-        # Key press detection  
         if os.name == "posix":
             import sys, select, tty, termios
 
-            # Save original terminal settings
             fd = sys.stdin.fileno()
             old_settings = termios.tcgetattr(fd)
             tty.setcbreak(fd)
@@ -629,7 +540,6 @@ class DetectionWorker(QThread):
                 return None
 
             import atexit
-            # Restore terminal settings on exit
             atexit.register(lambda: termios.tcsetattr(fd, termios.TCSADRAIN, old_settings))
         else:
             import msvcrt
@@ -641,7 +551,6 @@ class DetectionWorker(QThread):
         total_processing_time = 0
 
         def get_window_bounds(title):
-            """Detect window position and size dynamically per OS"""
             system = platform.system()
             if system == "Windows":
                 try:
@@ -662,7 +571,6 @@ class DetectionWorker(QThread):
                 while self.running:
                     start_time = time.time()
 
-                    # Detect app window dynamically 
                     if platform.system() == "Darwin":
                         self.offset_x, self.offset_y, self.width, self.height = get_window_bounds("QuickTime Player")
                     else:
@@ -670,18 +578,17 @@ class DetectionWorker(QThread):
                         if bounds:
                             self.offset_x, self.offset_y, self.width, self.height = bounds
                             
-                    # Capture full screen
                     full = np.array(sct.grab(sct.monitors[1]))[:, :, :3]
-                    h, w, _ = full.shape
+                    h,w, _ = full.shape
 
-                    # Use ratios instead of fixed pixels
                     if platform.system() == "Windows":
-                        trim_right_ratio = 0.17
-                        trim_bottom_ratio = 0.14
-                        trim_right_left_img_ratio = 0.17
-                        trim_top_ratio = 0.05
-                        shift_right_ratio = 0.03
-                        trim_right_rimg_ratio = 0
+                        trim_right_ratio = 0.17           
+                        trim_bottom_ratio = 0.14          
+                        trim_right_left_img_ratio = 0.17  
+                        trim_top_ratio = 0.05             
+                        shift_right_ratio = 0.03          
+                        trim_right_rimg_ratio = 0      
+
                     elif platform.system() == "Darwin":
                         trim_right_ratio = 0.18
                         trim_bottom_ratio = 0.34
@@ -690,7 +597,6 @@ class DetectionWorker(QThread):
                         shift_right_ratio = 0.16
                         trim_right_rimg_ratio = 0.18
 
-                    # Calculate actual pixel values
                     trim_top = int(h * trim_top_ratio)
                     trim_bottom = int(h * trim_bottom_ratio)
                     trim_right_left_img = int(w//2 * trim_right_left_img_ratio)
@@ -698,7 +604,6 @@ class DetectionWorker(QThread):
                     trim_right = int(w * trim_right_ratio)
                     trim_right_rimg = int(w * trim_right_rimg_ratio)
 
-                    # Crop images
                     left_img = full[
                         trim_top : h - trim_bottom,
                         : (w // 2) - trim_right_left_img,
@@ -711,53 +616,55 @@ class DetectionWorker(QThread):
                         :
                     ]
 
-                    # Run parallel inference
                     inference_start = time.time()
                     all_results, yellow_results = self.inference_runner.predict_parallel(left_img, right_img)
                     inference_time = time.time() - inference_start
                     
-                    # Update stats
                     self.processing_stats['avg_inference_time'] = (
                         self.processing_stats['avg_inference_time'] * self.processing_stats['total_frames'] + inference_time
                     ) / (self.processing_stats['total_frames'] + 1)
 
-                    # Process results
                     left_results = [all_results[0]]
                     right_results = [all_results[1]]
                     candle_results = [all_results[1]]
 
                     left_boxes, left_scores, left_labels, left_conf = self.process_results(left_results)
                     right_boxes, right_scores, right_labels, right_conf = self.process_results(right_results)
+
+                    # Process yellow results
                     yellow_boxes, yellow_scores, yellow_labels, _ = self.process_results(yellow_results)
-
-                    # Check for yellow label
-                    yellow_detected = "yellow_label" in yellow_labels
-                    if yellow_detected:
-                        print(f"Yellow label detected with confidence: {max([s for l, s in zip(yellow_labels, yellow_scores) if l == 'yellow_label'], default=0):.2f}")
-
-                    # NMS and merging
+                    
+                    # NMS only - NO MERGING for 1510 to keep indices aligned
                     keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
                     merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
                     merged_left_labels = [left_labels[i] for i in keep_left]
 
+                    # For 1510: use NMS only, skip merging to maintain label/box/score alignment
                     keep_right = self.non_max_suppression_fast(right_boxes, right_scores, iou_thresh=0.5)
-                    merged_right = self.merge_vertically_close_boxes([right_boxes[i] for i in keep_right])
-                    merged_right_labels = [right_labels[i] for i in keep_right]
+                    
+                    # Create aligned arrays after NMS (no merging)
+                    nms_right_boxes = [right_boxes[i] for i in keep_right]
+                    nms_right_labels = [right_labels[i] for i in keep_right]
+                    nms_right_scores = [right_scores[i] for i in keep_right]
 
-                    # Add yellow label to right labels if detected
-                    if yellow_detected:
-                        merged_right_labels.append("yellow_label")
-
-                    # Process candle results
+                    # Merge yellow labels
+                    if "yellow_label" in yellow_labels:
+                        for ylbl, ybox, yscore in zip(yellow_labels, yellow_boxes, yellow_scores):
+                            if ylbl == "yellow_label":
+                                nms_right_boxes.append(ybox)
+                                nms_right_labels.append("yellow_label")
+                                nms_right_scores.append(yscore)
+                                break
+                    
                     scandle_conf = 0.45 if platform.system() == "Windows" else 0.1
+                    
                     candle_boxes, candle_scores, candle_labels, _ = self.process_results(candle_results)
                     candle_boxes = [b for i, (b, l) in enumerate(zip(candle_boxes, candle_labels)) 
                                    if l == "candle" and candle_scores[i] >= scandle_conf]
 
-                    # Analyze and make trading decision
                     decision = self.analyze_candles_tm(
                         left_img, merged_left, merged_left_labels, left_conf,
-                        right_img, merged_right, merged_right_labels, right_conf,
+                        right_img, nms_right_boxes, nms_right_labels, nms_right_scores,
                         mode,
                         candle_boxes=candle_boxes,
                         candle_labels=candle_labels
@@ -768,19 +675,16 @@ class DetectionWorker(QThread):
                     print(f"Number of buys: {self.buy_count}")
                     print(f"Number of sells: {self.sell_count}")
 
-                    # Frame stats
                     self.frame_count += 1
                     frame_processing_time = time.time() - start_time
                     total_processing_time += frame_processing_time
                     self.processing_stats['total_frames'] += 1
                     self.processing_stats['total_time'] += frame_processing_time
-                    self.processing_stats['avg_processing_time'] = self.processing_stats['total_time'] / self.processing_stats['total_frames']
 
                     print(f"\nFrame {self.frame_count} processed in {frame_processing_time:.2f} sec.")
                     print(f"Avg inference time: {self.processing_stats['avg_inference_time']:.2f} sec")
                     time.sleep(0.0001)
 
-                    # Stop program
                     key = get_key()
                     if key == 'q':
                         self.running = False
@@ -790,7 +694,6 @@ class DetectionWorker(QThread):
                         current_time = datetime.now().strftime('%H:%M')
                         current_date = str(date.today())
 
-                        # Format log content
                         log_content = (
                             f"\nTime: {current_time}  Date: {current_date}\n"
                             f"Runtime: {int(minutes)} min {seconds:.2f} sec\n"
@@ -820,7 +723,6 @@ class DetectionWorker(QThread):
             for box, cls in zip(result.boxes, result.boxes.cls):
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                 
-                # Clamp coordinates
                 h, w = result.orig_shape[:2]
                 x1 = max(0, min(x1, w - 1))
                 x2 = max(0, min(x2, w - 1))
@@ -891,15 +793,8 @@ class DetectionWorker(QThread):
         return merged
 
 class MarketWorker:
-    def __init__(self):
-        self.app = QApplication.instance() or QApplication(sys.argv)
-        self.offset_x = 100
-        self.offset_y = 120
-        self.width = 700
-        self.height = 410
-        self.total_frames = 20 * 60 * 1
+    def __init__(self):      
         
-        # Get model paths
         if platform.system() == "Darwin":
             model_paths = {
                 'candles_labels': '/Users/ryanabbas/Desktop/work/StockMarket/yolo_models/candles_labels/weights/best.pt',
@@ -908,8 +803,15 @@ class MarketWorker:
         else:
             model_paths = {
                 'candles_labels': 'c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/yolo_models/candles_labels/weights/best.pt',
-                'yellow_labels': 'c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/yolo_models/yellow_labels/weights/best.pt'
+                'yellow_labels': "c:/Users/ArshadParveez/Documents/Trading Code/StockMarket/yolo_models/yellow_labels/weights/best.pt"
             }
+
+        self.app = QApplication.instance() or QApplication(sys.argv)
+        self.offset_x = 100
+        self.offset_y = 120
+        self.width = 700
+        self.height = 410
+        self.total_frames = 20 * 60 * 1  
         
         self.detection_thread = DetectionWorker(
             model_paths=model_paths,

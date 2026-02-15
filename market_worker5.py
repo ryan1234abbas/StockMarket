@@ -12,14 +12,13 @@ import platform
 from collections import deque
 from datetime import date, datetime
 import torch
-from concurrent.futures import ThreadPoolExecutor
 
 # GPU configuration
 device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
 print(f"Using device: {device}")
 
-class ParallelInferenceRunner:
-    """Handles parallel model inferences"""
+class ModelRunner:
+    """Handles model inferences with conditional yellow model activation"""
     def __init__(self, model_paths, device):
         self.models = {}
         self.device = device
@@ -34,35 +33,53 @@ class ParallelInferenceRunner:
             elif torch.backends.mps.is_available():
                 self.models[name].to('mps')
                 
-    def predict_parallel(self, left_img, right_img):
-        """Run inferences in parallel"""
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future_left = executor.submit(
-                self.models['candles_labels'].predict,
-                source=[left_img, right_img],
-                verbose=False,
-                stream=False,
-                conf=0.35 if platform.system() == "Windows" else 0.01,
-                iou=0.15,
-                imgsz=640,
-                device=self.device
-            )
-            
-            future_yellow = executor.submit(
-                self.models['yellow_labels'].predict,
-                source=right_img,
-                verbose=False,
-                stream=False,
-                conf=0.1,
-                iou=0.15,
-                imgsz=640,
-                device=self.device
-            )
-            
-            all_results = future_left.result()
-            yellow_results = future_yellow.result()
-            
-        return all_results, yellow_results
+    def predict_candles_only(self, left_img, right_img):
+        """Run only candles_labels model (default mode)"""
+        all_results = self.models['candles_labels'].predict(
+            source=[left_img, right_img],
+            verbose=False,
+            stream=False,
+            conf=0.35 if platform.system() == "Windows" else 0.01,
+            iou=0.15,
+            imgsz=640,
+            device=self.device
+        )
+        return all_results, None
+    
+    def predict_with_yellow(self, left_img, right_img):
+        """Run both models when yellow detection is needed"""
+        all_results = self.models['candles_labels'].predict(
+            source=[left_img, right_img],
+            verbose=False,
+            stream=False,
+            conf=0.35 if platform.system() == "Windows" else 0.01,
+            iou=0.15,
+            imgsz=640,
+            device=self.device
+        )
+        
+        # Run yellow detection on BOTH images
+        yellow_results_left = self.models['yellow_labels'].predict(
+            source=left_img,
+            verbose=False,
+            stream=False,
+            conf=0.1,
+            iou=0.15,
+            imgsz=640,
+            device=self.device
+        )
+        
+        yellow_results_right = self.models['yellow_labels'].predict(
+            source=right_img,
+            verbose=False,
+            stream=False,
+            conf=0.1,
+            iou=0.15,
+            imgsz=640,
+            device=self.device
+        )
+        
+        return all_results, (yellow_results_left, yellow_results_right)
 
 class DetectionWorker(QThread):
     update_left = pyqtSignal(np.ndarray, list)
@@ -71,7 +88,7 @@ class DetectionWorker(QThread):
 
     def __init__(self, model_paths, offset_x, offset_y, width, height, total_frames):
         super().__init__()
-        self.inference_runner = ParallelInferenceRunner(model_paths, device)
+        self.model_runner = ModelRunner(model_paths, device)
         self.offset_x = offset_x
         self.offset_y = offset_y
         self.width = width
@@ -99,6 +116,7 @@ class DetectionWorker(QThread):
         
         # Yellow label detection states
         self.yellow_label_active = False
+        self.yellow_model_active = False  # NEW: Controls when yellow model runs
         self.last_valid_rml_1510_before_yellow = None
         self.last_valid_srl_1510_before_yellow = None
         self.last_executed_pattern = None
@@ -148,64 +166,6 @@ class DetectionWorker(QThread):
             second = entries[1] if len(entries) > 1 else (None, None, None)
             return first, second
         
-        def save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                        box_1510, rightmost_lbl_1510, score_1510,
-                                        box_second_1510, second_lbl_1510, score_second_1510,
-                                        candle_boxes, yellow_detected):
-            debug_3020, debug_1510 = left_img.copy(), right_img.copy()
-
-            if box_3020:
-                x0, y0, x1, y1 = box_3020
-                cv2.rectangle(debug_3020, (x0, y0), (x1, y1), (0, 255, 0), 2)
-                cv2.putText(debug_3020, f"{rightmost_lbl_3020} ({score_3020:.2f})",
-                            (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-            if box_1510 and rightmost_lbl_1510:
-                x0, y0, x1, y1 = box_1510
-                cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (0, 0, 255), 2)
-                cv2.putText(debug_1510, f"{rightmost_lbl_1510} ({score_1510:.2f})",
-                            (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-
-            if box_second_1510 and second_lbl_1510:
-                x0, y0, x1, y1 = box_second_1510
-                cv2.rectangle(debug_1510, (x0, y0), (x1, y1), (255, 0, 0), 2)
-                cv2.putText(debug_1510, f"{second_lbl_1510} ({score_second_1510:.2f})",
-                            (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-
-            if candle_boxes:
-                for i, candle_box in enumerate(candle_boxes):
-                    cx0, cy0, cx1, cy1 = candle_box
-                    cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (0, 255, 255), 2)
-                    
-                    rightmost_candle = max(candle_boxes, key=lambda b: b[2])
-                    if candle_box == rightmost_candle:
-                        cv2.rectangle(debug_1510, (cx0, cy0), (cx1, cy1), (255, 255, 0), 3)
-                        candle_center = (cx0 + cx1) // 2
-                        cv2.putText(debug_1510, f"RMC: {candle_center}",
-                                    (cx0, cy0 - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-                    
-                    candle_center = (cx0 + cx1) // 2
-                    cv2.circle(debug_1510, (candle_center, (cy0 + cy1) // 2), 3, (0, 0, 255), -1)
-            
-            if box_1510 and candle_boxes:
-                lx0, ly0, lx1, ly1 = box_1510
-                rightmost_candle = max(candle_boxes, key=lambda b: b[2])
-                cx0, cy0, cx1, cy1 = rightmost_candle
-                candle_center = (cx0 + cx1) // 2
-
-                aligned = lx0+self.plus_minus <= candle_center <= lx1-self.plus_minus
-                alignment_text = f"Aligned: {aligned}"
-                cv2.putText(debug_1510, alignment_text,
-                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if aligned else (0, 0, 255), 2)
-            
-            if yellow_detected:
-                cv2.putText(debug_1510, "YELLOW LABEL DETECTED - TRADES PAUSED",
-                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            
-            os.makedirs("dummy", exist_ok=True)
-            cv2.imwrite("dummy/debug_3020.png", debug_3020)
-            cv2.imwrite("dummy/debug_1510.png", debug_1510)
-        
         def get_pattern_signature(lbl_3020, lbl_1510, x_pos, is_srl=False):
             if not lbl_3020 or not lbl_1510 or x_pos is None:
                 return None
@@ -220,6 +180,10 @@ class DetectionWorker(QThread):
         rightmost_lbl_3020, box_3020, score_3020 = self.get_rightmost_label(
             boxes_3020, labels_3020, scores_3020, min_conf=0.30
         )
+        # Check if 3020 RML is yellow label
+        yellow_3020 = (rightmost_lbl_3020 == "yellow_label")
+        
+        # Filter out yellow from 3020 if present
         if rightmost_lbl_3020 not in valid_labels:
             rightmost_lbl_3020, box_3020, score_3020 = None, None, None
 
@@ -242,8 +206,12 @@ class DetectionWorker(QThread):
         print(f"1510 RML: {rightmost_lbl_1510 or 'None'}")
         print(f"1510 SRML: {second_lbl_1510 or 'None'}")
 
-        # Yellow detection: block if yellow is RML or SRML
-        yellow_detected = (rightmost_lbl_1510 == "yellow_label") or (second_lbl_1510 == "yellow_label")
+        # Yellow detection: block if yellow is RML/SRML in 1510 OR RML in 3020
+        yellow_detected = (
+            (rightmost_lbl_1510 == "yellow_label") or 
+            (second_lbl_1510 == "yellow_label") or
+            yellow_3020
+        )
 
         if yellow_detected:
             print("YELLOW LABEL DETECTED - BLOCKING ALL TRADES")
@@ -259,8 +227,6 @@ class DetectionWorker(QThread):
             if second_lbl_1510 != "yellow_label" and second_lbl_1510:
                 self.prev_srl_1510 = second_lbl_1510
             
-            save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                            None, None, None, None, None, None, candle_boxes, yellow_detected=True)
             return None
 
         # Yellow cleared
@@ -271,6 +237,11 @@ class DetectionWorker(QThread):
             self.first_label_after_yellow_seen = rightmost_lbl_1510
             self.prev_rml_1510 = rightmost_lbl_1510
             self.prev_srl_1510 = second_lbl_1510
+            
+            # Deactivate yellow model
+            self.yellow_model_active = False
+            print("Yellow model DEACTIVATED")
+            
             return None
 
         # Skip first label after yellow
@@ -286,7 +257,7 @@ class DetectionWorker(QThread):
 
         # Define current_3020_rml_x
         current_3020_rml_x = box_3020[0] if box_3020 else None
-
+       
         # Backward movement detection
         if self.is_first_frame:
             self.is_first_frame = False
@@ -295,15 +266,6 @@ class DetectionWorker(QThread):
             if current_1510_rml_x is not None:
                 self.last_rml_1510_x = current_1510_rml_x
             return None
-
-        if self.backward_lockout_frames > 0:
-            self.backward_lockout_frames -= 1
-            if self.backward_lockout_frames == 0:
-                self.rml_backward_lockout = False
-                if not self.skip_first_label_after_yellow:
-                    self.last_executed_pattern = None
-            else:
-                return None
         
         current_rml_1510 = rightmost_lbl_1510
         if self.rml_backward_lockout:
@@ -329,20 +291,47 @@ class DetectionWorker(QThread):
         if (current_3020_rml_x is not None and 
             self.last_correct_3020_rml_x is not None and
             current_3020_rml_x < self.last_correct_3020_rml_x - 25):
-            
-            self.backward_lockout_frames = 10
+            print(f"3020 BACKWARD! Activating yellow model")
+
+            self.backward_lockout_frames = 5
             self.rml_backward_lockout = True
             self.last_correct_3020_rml_x = current_3020_rml_x
+            
+            # Activate yellow model
+            if not self.yellow_model_active:
+                self.yellow_model_active = True
+                print("Yellow model ACTIVATED due to backward movement")
+            
             return None
 
         # Check backward movement 1510
         if (current_1510_rml_x is not None and 
             self.last_rml_1510_x is not None and
             current_1510_rml_x < self.last_rml_1510_x - 10):
-            
+            print(f"1510 BACKWARD! Activating yellow model")
+
             self.backward_lockout_frames = 5
             self.rml_backward_lockout = True
             self.last_rml_1510_x = current_1510_rml_x
+            
+            # Activate yellow model
+            if not self.yellow_model_active:
+                self.yellow_model_active = True
+                print("Yellow model ACTIVATED due to backward movement")
+            
+            return None
+        
+        # Handle backward lockout countdown
+        if self.backward_lockout_frames > 0:
+            self.backward_lockout_frames -= 1
+            if self.backward_lockout_frames == 0:
+                self.rml_backward_lockout = False
+                if not self.skip_first_label_after_yellow:
+                    self.last_executed_pattern = None
+                # Deactivate yellow model if no actual yellow was found during lockout
+                if self.yellow_model_active and not self.yellow_label_active:
+                    self.yellow_model_active = False
+                    print("Yellow model DEACTIVATED - lockout expired, no yellow found")
             return None
 
         if current_3020_rml_x is not None:
@@ -388,11 +377,6 @@ class DetectionWorker(QThread):
                 self.last_executed_pattern = pattern_sig
                 
                 pyautogui.hotkey('ctrl','b')
-                
-                save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                box_1510, rightmost_lbl_1510, score_1510,
-                                box_second_1510, second_lbl_1510, score_second_1510,
-                                candle_boxes, yellow_detected)
                 return decision
 
         # SELL condition
@@ -423,11 +407,6 @@ class DetectionWorker(QThread):
                 self.last_executed_pattern = pattern_sig
                 
                 pyautogui.hotkey('ctrl','m')
-                
-                save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                box_1510, rightmost_lbl_1510, score_1510,
-                                box_second_1510, second_lbl_1510, score_second_1510,
-                                candle_boxes, yellow_detected)
                 return decision
 
         # === SRL BACKUP TRADE ===
@@ -461,11 +440,6 @@ class DetectionWorker(QThread):
                 self.last_executed_pattern = pattern_sig
                 
                 pyautogui.hotkey('ctrl','b')
-                
-                save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                box_1510, rightmost_lbl_1510, score_1510,
-                                box_second_1510, second_lbl_1510, score_second_1510,
-                                candle_boxes, yellow_detected)
                 return decision
 
             # SRL SELL
@@ -488,25 +462,15 @@ class DetectionWorker(QThread):
                 self.last_executed_pattern = pattern_sig
             
                 pyautogui.hotkey('ctrl','m')
-                
-                save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                                box_1510, rightmost_lbl_1510, score_1510,
-                                box_second_1510, second_lbl_1510, score_second_1510,
-                                candle_boxes, yellow_detected)
                 return decision
 
         elif current_rml_1510 != self.prev_rml_1510 and not self.rml_backward_lockout:
             self.prev_rml_1510 = current_rml_1510
-            
-        save_debug_images(left_img, right_img, box_3020, rightmost_lbl_3020, score_3020,
-                    box_1510, rightmost_lbl_1510, score_1510,
-                    box_second_1510, second_lbl_1510, score_second_1510,
-                    candle_boxes, yellow_detected)
 
         return decision
 
     def get_rightmost_label(self, boxes, labels, scores, min_conf=0.30):
-        valid_labels = {"HH", "LL", "HL", "LH"}
+        valid_labels = {"HH", "LL", "HL", "LH", "yellow_label"}  # Added yellow_label
 
         if not boxes or not labels or not scores:
             return None, None, None
@@ -617,7 +581,14 @@ class DetectionWorker(QThread):
                     ]
 
                     inference_start = time.time()
-                    all_results, yellow_results = self.inference_runner.predict_parallel(left_img, right_img)
+                    
+                    # Conditional model execution
+                    if self.yellow_model_active:
+                        print("[YELLOW MODEL ACTIVE]")
+                        all_results, yellow_results = self.model_runner.predict_with_yellow(left_img, right_img)
+                    else:
+                        all_results, yellow_results = self.model_runner.predict_candles_only(left_img, right_img)
+                    
                     inference_time = time.time() - inference_start
                     
                     self.processing_stats['avg_inference_time'] = (
@@ -631,9 +602,6 @@ class DetectionWorker(QThread):
                     left_boxes, left_scores, left_labels, left_conf = self.process_results(left_results)
                     right_boxes, right_scores, right_labels, right_conf = self.process_results(right_results)
 
-                    # Process yellow results
-                    yellow_boxes, yellow_scores, yellow_labels, _ = self.process_results(yellow_results)
-                    
                     # NMS only - NO MERGING for 1510 to keep indices aligned
                     keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
                     merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
@@ -647,14 +615,60 @@ class DetectionWorker(QThread):
                     nms_right_labels = [right_labels[i] for i in keep_right]
                     nms_right_scores = [right_scores[i] for i in keep_right]
 
-                    # Merge yellow labels
-                    if "yellow_label" in yellow_labels:
-                        for ylbl, ybox, yscore in zip(yellow_labels, yellow_boxes, yellow_scores):
-                            if ylbl == "yellow_label":
-                                nms_right_boxes.append(ybox)
-                                nms_right_labels.append("yellow_label")
-                                nms_right_scores.append(yscore)
-                                break
+                    # Process yellow results ONLY if yellow model was active
+                    yellow_found_this_frame = False
+                    if yellow_results is not None:
+                        yellow_results_left, yellow_results_right = yellow_results
+                        
+                        # Process yellow for LEFT image (3020)
+                        yellow_boxes_left, yellow_scores_left, yellow_labels_left, _ = self.process_results([yellow_results_left[0]])
+                        
+                        # For 3020: Only merge yellow if it would be the RML (rightmost)
+                        if "yellow_label" in yellow_labels_left and yellow_boxes_left:
+                            # Check if this yellow would be the rightmost label
+                            all_left_boxes = merged_left + yellow_boxes_left
+                            all_left_labels = merged_left_labels + yellow_labels_left
+                            
+                            # Find rightmost among all boxes
+                            if all_left_boxes:
+                                rightmost_idx = max(range(len(all_left_boxes)), key=lambda i: all_left_boxes[i][0])
+                                # Only add yellow if it IS the rightmost
+                                if rightmost_idx >= len(merged_left):  # Yellow is rightmost
+                                    yellow_found_this_frame = True
+                                    for ylbl, ybox, yscore in zip(yellow_labels_left, yellow_boxes_left, yellow_scores_left):
+                                        if ylbl == "yellow_label":
+                                            merged_left.append(ybox)
+                                            merged_left_labels.append("yellow_label")
+                                            break
+                        
+                        # Process yellow for RIGHT image (1510)
+                        yellow_boxes_right, yellow_scores_right, yellow_labels_right, _ = self.process_results([yellow_results_right[0]])
+                        
+                        # For 1510: Only merge yellow if it would be RML or SRML (top 2 rightmost)
+                        if "yellow_label" in yellow_labels_right and yellow_boxes_right:
+                            # Check if this yellow would be in top 2 rightmost
+                            all_right_boxes = nms_right_boxes + yellow_boxes_right
+                            all_right_labels = nms_right_labels + yellow_labels_right
+                            
+                            if all_right_boxes:
+                                # Get top 2 rightmost
+                                sorted_indices = sorted(range(len(all_right_boxes)), key=lambda i: all_right_boxes[i][0], reverse=True)
+                                top_2_indices = sorted_indices[:2] if len(sorted_indices) >= 2 else sorted_indices
+                                
+                                # Check if yellow is in top 2
+                                yellow_idx = len(nms_right_boxes)  # First yellow index after existing boxes
+                                if yellow_idx in top_2_indices:  # Yellow is RML or SRML
+                                    yellow_found_this_frame = True
+                                    for ylbl, ybox, yscore in zip(yellow_labels_right, yellow_boxes_right, yellow_scores_right):
+                                        if ylbl == "yellow_label":
+                                            nms_right_boxes.append(ybox)
+                                            nms_right_labels.append("yellow_label")
+                                            nms_right_scores.append(yscore)
+                                            break
+                    
+                    # If yellow was found this frame, reset the lockout to keep model active
+                    if yellow_found_this_frame and self.yellow_model_active:
+                        self.backward_lockout_frames = 5  # Reset lockout to keep scanning
                     
                     scandle_conf = 0.45 if platform.system() == "Windows" else 0.1
                     
