@@ -71,13 +71,36 @@ TAG_MISSING_FRAMES = 6          # tag gone this many frames -> filled/cancelled
 
 # ===== FEATURE SWITCHES =====
 # The ENTRY side (signal -> limit at the midband line) is proven and always
-# on. Everything else is opt-in, OFF by default, so the bot's core behavior
-# stays reliable while extras are verified one at a time:
+# on. Everything else is opt-in so behaviors are verified one at a time:
 TRACK_ORDER = False   # move the resting limit with the line (cancel/replace).
                       # Needs real-time speed - menus take ~2s per move.
 AUTO_CLOSE = True     # area-color exits + close-before-entry Close clicks.
                       # close.png (cropped from a real 4K capture, verified
                       # match=1.000 across sessions) locates the button.
+ATTACH_INDICATOR = True  # after placing, attach the order to mdTBandObf
+                         # MidlineUp (BUY) / MidlineDn (SELL) via the order
+                         # tag menu, so NinjaTrader moves it natively.
+
+# Attach-To-Indicator settings. Menu facts measured from saved 4K captures:
+# - the order submenu is ~371px tall WITH 'Auto Chase' (ATM strategy active)
+#   and ~263px tall without it; 'Attach To Indicator' is 2nd-from-last with
+#   Auto Chase, last without. End(+Up if tall) reaches it in both layouts.
+#   (Letter keys do NOT work in these WPF menus - arrow/Home/End keys do.)
+# - the Enabled/Properties popup opens over the chart; 'Properties' sits at
+#   0.72 of its height ('Enabled' above it is disabled and unclickable).
+# - the dialog dropdown DOES accept typed text; "mdtband" jumps to the
+#   mdTBandObf entries ("mdt" alone hits mdTimeRangeObf first). Plot order:
+#   |Upper, |Lower, |MidlineUp, |MidlineDn.
+SUBMENU_TALL_H = 320             # taller than this = Auto Chase present
+PROPERTIES_ITEM_FRACTION = 0.72
+ATTACH_INDICATOR_PREFIX = "mdtband"
+ATTACH_DOWNS = {"BUY": 2, "SELL": 3}   # from |Upper: MidlineUp / MidlineDn
+ATTACH_PLOT_NAME = {"BUY": "MidlineUp", "SELL": "MidlineDn"}
+ATTACH_DIALOG_TITLE = "Attach To Indicator Properties"
+ATTACH_DROPDOWN_RATIO = (0.74, 0.26)   # dropdown center within the dialog
+ATTACH_OK_RATIO = (0.59, 0.85)         # OK button center within the dialog
+ATTACH_DELAY_AFTER_PLACE = 0.8
+ATTACH_MAX_ATTEMPTS = 15
 ORDER_MENU_MAX_HEIGHT = 170  # px; the order menu has ONE item ('Buy N @ .. Entry').
                              # A taller first menu means the right-click missed the
                              # tag and hit something else (e.g. a drawing object,
@@ -359,6 +382,9 @@ class MidbandWorker(QThread):
         # new HH/LL can trade, even at a previously traded price level
         self.prev_r_lbl = None
 
+        # Pending Attach-To-Indicator for a freshly placed order
+        self.attach_pending = None
+
         print("Loading YOLO model...")
         self.model = YOLO(MODEL_PATH)
         if device != 'cpu':
@@ -400,6 +426,7 @@ class MidbandWorker(QThread):
             self.log_event(f"AUTO_CLOSE OFF {self.position or 'order'} - {reason}")
             self.position = None
             self.tracked = None
+            self.attach_pending = None
             return
         x, y = self.find_button("CLOSE")
         if not os.path.exists(CLOSE_BUTTON_IMG):
@@ -423,20 +450,25 @@ class MidbandWorker(QThread):
         self.log_event(f"CLOSE {self.position or 'order'} - {reason}")
         self.position = None
         self.tracked = None
+        self.attach_pending = None
 
-    def click_limit_at(self, hit):
-        """Cancel all working orders, then shift+click the given point on the
-        1510 chart (NinjaTrader chart mouse order: Limit = Shift+LeftClick)."""
+    def axis_focus_x(self, right_img):
+        """Screen x on the PRICE AXIS just right of the plot - the safe
+        place for focus clicks (axis clicks never place orders)."""
+        edge = plot_right_edge(right_img)
+        return self.right_origin_x + min(edge + 30, right_img.shape[1] - 6)
+
+    def click_limit_at(self, hit, focus_x):
+        """Focus NinjaTrader via a PRICE AXIS click, then shift+click the
+        given chart point (chart mouse order: Limit = Shift+LeftClick).
+        NEVER plain-click the chart plot itself: chart mouse orders can map
+        a plain LeftClick to a MARKET order - the old chart-area focus
+        click was submitting random market buys."""
         y, x = hit
         screen_x = self.right_origin_x + x
         screen_y = self.chart_origin_y + y
 
-        # Focus click first: the console usually holds keyboard focus, and a
-        # click into an unfocused window is consumed as window activation.
-        # It lands OFFSET from the order point with a pause afterwards so
-        # the pair can never be interpreted as a double-click. A plain
-        # left-click places no order (Limit needs shift), so it is safe.
-        pyautogui.click(screen_x - 120, screen_y)
+        pyautogui.click(focus_x, screen_y)
         time.sleep(0.3)
         pyautogui.keyDown('shift')
         time.sleep(0.05)
@@ -462,7 +494,7 @@ class MidbandWorker(QThread):
             self.close_position("flipping direction")
             time.sleep(CLOSE_BEFORE_ENTRY_DELAY)
 
-        screen_x, screen_y = self.click_limit_at(hit)
+        screen_x, screen_y = self.click_limit_at(hit, self.axis_focus_x(right_img))
 
         if side == "BUY":
             self.buy_count += 1
@@ -474,6 +506,10 @@ class MidbandWorker(QThread):
         self.tracked = {"side": side, "y": hit[0], "time": time.time(),
                         "tag_missing": 0}
         self.last_reposition_time = time.time()
+        # Queue the Attach-To-Indicator step for the freshly placed order
+        if ATTACH_INDICATOR:
+            self.attach_pending = {"side": side, "y": hit[0], "attempts": 0,
+                                   "time": time.time()}
         print(f"LIMIT {side} placed at midband line (screen {screen_x},{screen_y})")
         return side, hit
 
@@ -540,6 +576,147 @@ class MidbandWorker(QThread):
         self.log_event("CANCELLED resting order via tag menu")
         return True
 
+    def attach_order_to_indicator(self, side, tag_yx):
+        """Attach the resting order to mdTBandObf MidlineUp/MidlineDn via
+        its tag menu, using only mechanics verified in run captures:
+        right-click tag -> click the single order item -> End (+Up when the
+        menu height says Auto Chase is present) -> Right opens the popup ->
+        CLICK 'Properties' (found by screenshot diff; keyboard cannot select
+        it because 'Enabled' above it is disabled, which keeps WPF focus on
+        the parent menu) -> dialog: type prefix, arrow to the plot, OK."""
+        os.makedirs("rpa_debug", exist_ok=True)
+        ts = datetime.now().strftime("%H%M%S")
+
+        def fail(step, shot=None, box=None):
+            if shot is not None:
+                self._save_rpa_shot(ts, f"FAIL_{step}", shot, box)
+            for _ in range(3):
+                pyautogui.press('esc')
+                time.sleep(0.12)
+            self.log_event(f"ATTACH FAILED for {side} at step: {step}")
+            print(f"ATTACH FAILED at step '{step}' - menus closed")
+            return False
+
+        with mss.mss() as sct:
+            mon = sct.monitors[1]
+
+            def grab():
+                return np.array(sct.grab(mon))[:, :, :3]
+
+            sx = self.right_origin_x + tag_yx[1]
+            sy = self.chart_origin_y + tag_yx[0]
+
+            # 1) right-click the order tag -> single-item order menu
+            before = grab()
+            pyautogui.rightClick(sx, sy)
+            time.sleep(0.7)
+            shot1 = grab()
+            menu1 = find_new_menu(before, shot1)
+            if menu1 is None:
+                return fail("order-menu", shot1)
+            if menu1[3] > ORDER_MENU_MAX_HEIGHT:
+                return fail("wrong-menu-not-order", shot1, menu1)
+            self._save_rpa_shot(ts, "at1_menu", shot1, menu1)
+
+            # 2) click the order item -> order submenu opens
+            pyautogui.moveTo(mon["left"] + menu1[0] + menu1[2] // 2,
+                             mon["top"] + menu1[1] + menu1[3] // 2)
+            time.sleep(0.35)
+            pyautogui.click()
+            time.sleep(0.7)
+            shot2 = grab()
+            submenu = find_new_menu(shot1, shot2)
+            if submenu is None:
+                return fail("order-submenu", shot2)
+            self._save_rpa_shot(ts, "at2_submenu", shot2, submenu)
+
+            # 3) reach 'Attach To Indicator' with arrow-family keys only:
+            # End = last item; one Up on the tall (Auto Chase) layout
+            pyautogui.press('end')
+            time.sleep(0.25)
+            if submenu[3] > SUBMENU_TALL_H:
+                pyautogui.press('up')
+                time.sleep(0.25)
+            pre_right = grab()
+            pyautogui.press('right')   # open the Enabled/Properties popup
+            time.sleep(0.5)
+            shot3 = grab()
+            popup = find_new_menu(pre_right, shot3, min_area=4000)
+            self._save_rpa_shot(ts, "at3_popup", shot3, popup)
+            if popup is None:
+                return fail("properties-popup", shot3)
+
+            # 4) click 'Properties' in the popup
+            pyautogui.moveTo(mon["left"] + popup[0] + popup[2] // 2,
+                             mon["top"] + popup[1] + int(popup[3] * PROPERTIES_ITEM_FRACTION))
+            time.sleep(0.35)
+            pyautogui.click()
+            time.sleep(1.1)
+
+        # 5) the properties dialog, located by window title
+        dialog = None
+        try:
+            import pygetwindow as gw
+            wins = gw.getWindowsWithTitle(ATTACH_DIALOG_TITLE)
+            if wins:
+                dialog = wins[0]
+            elif gw.getWindowsWithTitle("Auto Chase Properties"):
+                self.log_event("MISNAVIGATED: Auto Chase dialog opened - retrying")
+                print("Misnavigated to the AUTO CHASE dialog - closing, will retry")
+        except Exception as e:
+            print(f"Dialog lookup failed: {e}")
+        if dialog is None:
+            return fail("properties-dialog")
+
+        # 6) pick the plot: type the prefix (jumps to |Upper), arrow down
+        # to MidlineUp (BUY) / MidlineDn (SELL), Enter, then OK
+        pyautogui.click(dialog.left + int(dialog.width * ATTACH_DROPDOWN_RATIO[0]),
+                        dialog.top + int(dialog.height * ATTACH_DROPDOWN_RATIO[1]))
+        time.sleep(0.5)
+        pyautogui.write(ATTACH_INDICATOR_PREFIX, interval=0.09)
+        time.sleep(0.25)
+        for _ in range(ATTACH_DOWNS[side]):
+            pyautogui.press('down')
+            time.sleep(0.2)
+        pyautogui.press('enter')
+        time.sleep(0.35)
+
+        with mss.mss() as sct:
+            self._save_rpa_shot(ts, "at4_dialog",
+                                np.array(sct.grab(sct.monitors[1]))[:, :, :3])
+
+        pyautogui.click(dialog.left + int(dialog.width * ATTACH_OK_RATIO[0]),
+                        dialog.top + int(dialog.height * ATTACH_OK_RATIO[1]))
+        plot = ATTACH_PLOT_NAME[side]
+        self.log_event(f"ATTACHED {side} order to mdTBandObf|{plot}")
+        print(f"{side} order ATTACHED to mdTBandObf|{plot} - "
+              "NinjaTrader now moves it with the indicator")
+        return True
+
+    def try_attach_pending(self, right_img):
+        """Run the attach sequence once the fresh order's tag renders;
+        aims at the tag nearest the midband line's CURRENT position and
+        retries a few frames on failure."""
+        if not self.attach_pending or self.paused:
+            return
+        if time.time() - self.attach_pending["time"] < ATTACH_DELAY_AFTER_PLACE:
+            return
+
+        self.attach_pending["attempts"] += 1
+        side = self.attach_pending["side"]
+        line_bgr = BUY_LINE_BGR if side == "BUY" else SELL_LINE_BGR
+        line_hit = detect_line(right_img, line_bgr)
+        y_hint = line_hit[0] if line_hit is not None else self.attach_pending["y"]
+        tag = find_order_tag(right_img, y_hint)
+        if tag is not None:
+            if self.attach_order_to_indicator(side, tag):
+                self.attach_pending = None
+                return
+        if self.attach_pending["attempts"] >= ATTACH_MAX_ATTEMPTS:
+            self.log_event("ATTACH ABANDONED - order stays static")
+            print("ATTACH ABANDONED - order stays static (attach manually if needed)")
+            self.attach_pending = None
+
     def manage_tracked_order(self, right_img):
         """Keep the resting limit attached to the midband line: cancel and
         re-place whenever the line moves. Stops once price touches the
@@ -578,7 +755,7 @@ class MidbandWorker(QThread):
                 time.time() - self.last_reposition_time >= REPOSITION_MIN_INTERVAL):
             if self.cancel_order_via_menu(tag):
                 time.sleep(0.3)
-                self.click_limit_at(line_hit)
+                self.click_limit_at(line_hit, self.axis_focus_x(right_img))
                 self.tracked["y"] = line_hit[0]
                 print(f"{side} limit MOVED with midband line "
                       f"(y {tag[0]} -> {line_hit[0]})")
@@ -689,6 +866,9 @@ class MidbandWorker(QThread):
                     # Keep the resting limit order attached to the midband
                     # line (cancel + re-place when the line moves)
                     self.manage_tracked_order(right_img)
+
+                    # Attach a freshly placed order to the mdTBand indicator
+                    self.try_attach_pending(right_img)
 
                     signal, debug, matched_box = evaluate_frame(left_dets, right_dets)
 
