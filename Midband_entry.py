@@ -75,8 +75,9 @@ TAG_MISSING_FRAMES = 6          # tag gone this many frames -> filled/cancelled
 # stays reliable while extras are verified one at a time:
 TRACK_ORDER = False   # move the resting limit with the line (cancel/replace).
                       # Needs real-time speed - menus take ~2s per move.
-AUTO_CLOSE = False    # area-color exits + close-before-entry Close clicks.
-                      # Needs the Close button reachable (close.png or DOM).
+AUTO_CLOSE = True     # area-color exits + close-before-entry Close clicks.
+                      # close.png (cropped from a real 4K capture, verified
+                      # match=1.000 across sessions) locates the button.
 ORDER_MENU_MAX_HEIGHT = 170  # px; the order menu has ONE item ('Buy N @ .. Entry').
                              # A taller first menu means the right-click missed the
                              # tag and hit something else (e.g. a drawing object,
@@ -126,8 +127,10 @@ def rightmost_label(boxes, labels, scores, min_conf=LABEL_CONF):
 
 
 def evaluate_frame(left_dets, right_dets):
-    """New logic: BUY when both charts' rightmost label is HH,
-    SELL when both charts' rightmost label is LL."""
+    """BUY when 3020 RML is HH and the 1510 RML is HH (entry at the green
+    midband line), SELL when 3020 RML is LL and 1510 RML is LL (entry at
+    the magenta line). Fires for EVERY NEW 1510 label: the caller resets
+    the dedup signature whenever the 1510 RML changes."""
     l_lbl, l_box = rightmost_label(*left_dets)
     r_lbl, r_box = rightmost_label(*right_dets)
 
@@ -352,6 +355,10 @@ class MidbandWorker(QThread):
         self.tracked = None
         self.last_reposition_time = 0.0
 
+        # 1510 RML tracking: a CHANGED label re-arms the dedup so every
+        # new HH/LL can trade, even at a previously traded price level
+        self.prev_r_lbl = None
+
         print("Loading YOLO model...")
         self.model = YOLO(MODEL_PATH)
         if device != 'cpu':
@@ -448,8 +455,11 @@ class MidbandWorker(QThread):
             print(f"{side} signal but midband line NOT FOUND - no order placed")
             return None, None
 
-        if self.position is not None:
-            self.close_position("replacing with new entry")
+        # Close only when FLIPPING direction; same-direction adds keep the
+        # existing position/orders (one Close flattens and cancels them all)
+        opposite = "SHORT" if side == "BUY" else "LONG"
+        if self.position == opposite:
+            self.close_position("flipping direction")
             time.sleep(CLOSE_BEFORE_ENTRY_DELAY)
 
         screen_x, screen_y = self.click_limit_at(hit)
@@ -682,6 +692,14 @@ class MidbandWorker(QThread):
 
                     signal, debug, matched_box = evaluate_frame(left_dets, right_dets)
 
+                    # Re-arm the dedup whenever the 1510 RML changes, so
+                    # EVERY new HH/LL can trade (even at a price level that
+                    # already traded once)
+                    r_lbl_now, _ = rightmost_label(*right_dets)
+                    if r_lbl_now != self.prev_r_lbl:
+                        self.prev_r_lbl = r_lbl_now
+                        self.last_executed_sig = None
+
                     if signal is not None and signal == self.candidate_signal:
                         self.candidate_frames += 1
                     else:
@@ -698,14 +716,10 @@ class MidbandWorker(QThread):
                             (signal == "SELL" and self.mode in ("sell", "both")
                              and now - self.last_sell_time >= SELL_COOLDOWN)
                         )
-                        # Never re-enter the same side while an entry is live:
-                        # in a trending run new LL/HH labels print constantly
-                        # and would churn cancel/replace every few seconds
-                        same_side_active = (
-                            (signal == "BUY" and self.position == "LONG") or
-                            (signal == "SELL" and self.position == "SHORT")
-                        )
-                        if cooldown_ok and not same_side_active and sig != self.last_executed_sig:
+                        # Same-side adds are allowed: every NEW 1510 HH/LL
+                        # places another entry; the area-color Close flattens
+                        # everything (and cancels resting orders) on a flip
+                        if cooldown_ok and sig != self.last_executed_sig:
                             decision, click_yx = self.place_limit_at_line(signal, right_img)
                             if decision:
                                 self.last_executed_sig = sig
