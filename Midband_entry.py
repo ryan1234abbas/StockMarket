@@ -120,6 +120,11 @@ STABLE_FRAMES = 2
 BUY_COOLDOWN = 3.0
 SELL_COOLDOWN = 3.0
 RML_STABLE_FRAMES = 3   # frames a 1510 label must hold to confirm an episode
+MIN_SIGNAL_HOLD = 2.0   # seconds a signal must hold before it may trade -
+                        # labels printed at the developing extreme are
+                        # provisional (the indicator repaints them on a
+                        # reversal), and fleeting wiggle-labels caused
+                        # entries the trader would not have taken
 STATUS_EVERY_N_FRAMES = 30
 CLOSE_BEFORE_ENTRY_DELAY = 0.2   # after Close click, before placing the limit
 
@@ -363,6 +368,7 @@ class MidbandWorker(QThread):
         self.last_sell_time = 0
         self.candidate_signal = None
         self.candidate_frames = 0
+        self.candidate_since = 0.0
         self.button_pos = {}
 
         # Screen origins of the 1510 crop, set in run()
@@ -921,9 +927,12 @@ class MidbandWorker(QThread):
                     else:
                         self.candidate_signal = signal
                         self.candidate_frames = 1 if signal else 0
+                        self.candidate_since = time.time()
 
                     decision = None
-                    if signal and self.candidate_frames >= STABLE_FRAMES and not self.paused:
+                    if (signal and self.candidate_frames >= STABLE_FRAMES and
+                            time.time() - self.candidate_since >= MIN_SIGNAL_HOLD and
+                            not self.paused):
                         now = time.time()
                         cooldown_ok = (
                             (signal == "BUY" and self.mode in ("buy", "both")
