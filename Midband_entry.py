@@ -81,17 +81,20 @@ ATTACH_INDICATOR = True  # after placing, attach the order to mdTBandObf
                          # MidlineUp (BUY) / MidlineDn (SELL) via the order
                          # tag menu, so NinjaTrader moves it natively.
 
-# Attach-To-Indicator settings. Menu facts measured from saved 4K captures:
-# - the order submenu is ~371px tall WITH 'Auto Chase' (ATM strategy active)
-#   and ~263px tall without it; 'Attach To Indicator' is 2nd-from-last with
-#   Auto Chase, last without. End(+Up if tall) reaches it in both layouts.
-#   (Letter keys do NOT work in these WPF menus - arrow/Home/End keys do.)
-# - the Enabled/Properties popup opens over the chart; 'Properties' sits at
-#   0.72 of its height ('Enabled' above it is disabled and unclickable).
+# Attach-To-Indicator settings. Menu facts established from run captures:
+# - ONLY Up/Down work in these WPF menus. Letter keys are no-ops (11:28
+#   frame) and so is End (13:22 run: End+Up behaved as bare Up). One Up
+#   wraps to the LAST item from any state - that is the reliable anchor.
+# - the last item is 'Auto Chase' when an ATM strategy is active, else
+#   'Attach To Indicator'. The two are told apart by their POPUP WIDTH:
+#   Enabled/Properties measures 287px; 'Auto Chase Properties' is much
+#   wider. On the wide popup: Esc, Up, Right lands on Attach To Indicator.
+# - 'Properties' sits at 0.72 of the popup height ('Enabled' above it is
+#   disabled, which is also why keyboard cannot select Properties).
 # - the dialog dropdown DOES accept typed text; "mdtband" jumps to the
 #   mdTBandObf entries ("mdt" alone hits mdTimeRangeObf first). Plot order:
 #   |Upper, |Lower, |MidlineUp, |MidlineDn.
-SUBMENU_TALL_H = 320             # taller than this = Auto Chase present
+AUTOCHASE_POPUP_MIN_W = 330      # popup wider than this = Auto Chase's
 PROPERTIES_ITEM_FRACTION = 0.72
 ATTACH_INDICATOR_PREFIX = "mdtband"
 ATTACH_DOWNS = {"BUY": 2, "SELL": 3}   # from |Upper: MidlineUp / MidlineDn
@@ -100,7 +103,7 @@ ATTACH_DIALOG_TITLE = "Attach To Indicator Properties"
 ATTACH_DROPDOWN_RATIO = (0.74, 0.26)   # dropdown center within the dialog
 ATTACH_OK_RATIO = (0.59, 0.85)         # OK button center within the dialog
 ATTACH_DELAY_AFTER_PLACE = 0.8
-ATTACH_MAX_ATTEMPTS = 15
+ATTACH_MAX_ATTEMPTS = 4   # real attach runs (each ~5s); 30s overall deadline
 ORDER_MENU_MAX_HEIGHT = 170  # px; the order menu has ONE item ('Buy N @ .. Entry').
                              # A taller first menu means the right-click missed the
                              # tag and hit something else (e.g. a drawing object,
@@ -630,18 +633,28 @@ class MidbandWorker(QThread):
                 return fail("order-submenu", shot2)
             self._save_rpa_shot(ts, "at2_submenu", shot2, submenu)
 
-            # 3) reach 'Attach To Indicator' with arrow-family keys only:
-            # End = last item; one Up on the tall (Auto Chase) layout
-            pyautogui.press('end')
+            # 3) one Up ALWAYS lands on the last item (wraps from any state;
+            # End and letter keys are no-ops in these menus). Open its popup
+            # and identify it by width: the wide one is 'Auto Chase', in
+            # which case Esc + Up + Right reaches 'Attach To Indicator'.
+            pyautogui.press('up')
             time.sleep(0.25)
-            if submenu[3] > SUBMENU_TALL_H:
-                pyautogui.press('up')
-                time.sleep(0.25)
             pre_right = grab()
-            pyautogui.press('right')   # open the Enabled/Properties popup
+            pyautogui.press('right')
             time.sleep(0.5)
             shot3 = grab()
             popup = find_new_menu(pre_right, shot3, min_area=4000)
+            if popup is not None and popup[2] > AUTOCHASE_POPUP_MIN_W:
+                # last item is Auto Chase (ATM active) - step up to Attach
+                pyautogui.press('esc')     # close the Auto Chase popup
+                time.sleep(0.3)
+                pyautogui.press('up')      # Attach To Indicator
+                time.sleep(0.25)
+                pre_right = grab()
+                pyautogui.press('right')
+                time.sleep(0.5)
+                shot3 = grab()
+                popup = find_new_menu(pre_right, shot3, min_area=4000)
             self._save_rpa_shot(ts, "at3_popup", shot3, popup)
             if popup is None:
                 return fail("properties-popup", shot3)
@@ -702,17 +715,20 @@ class MidbandWorker(QThread):
         if time.time() - self.attach_pending["time"] < ATTACH_DELAY_AFTER_PLACE:
             return
 
-        self.attach_pending["attempts"] += 1
         side = self.attach_pending["side"]
         line_bgr = BUY_LINE_BGR if side == "BUY" else SELL_LINE_BGR
         line_hit = detect_line(right_img, line_bgr)
         y_hint = line_hit[0] if line_hit is not None else self.attach_pending["y"]
         tag = find_order_tag(right_img, y_hint)
         if tag is not None:
+            # Count only REAL attach runs (a run takes ~5s); frames where
+            # the tag is not yet visible do not consume the budget
+            self.attach_pending["attempts"] += 1
             if self.attach_order_to_indicator(side, tag):
                 self.attach_pending = None
                 return
-        if self.attach_pending["attempts"] >= ATTACH_MAX_ATTEMPTS:
+        if (self.attach_pending["attempts"] >= ATTACH_MAX_ATTEMPTS or
+                time.time() - self.attach_pending["time"] > 30):
             self.log_event("ATTACH ABANDONED - order stays static")
             print("ATTACH ABANDONED - order stays static (attach manually if needed)")
             self.attach_pending = None
