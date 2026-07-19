@@ -119,7 +119,7 @@ YOLO_CONF = 0.25
 STABLE_FRAMES = 2
 BUY_COOLDOWN = 3.0
 SELL_COOLDOWN = 3.0
-Y_BUCKET = 15
+RML_STABLE_FRAMES = 3   # frames a 1510 label must hold to confirm an episode
 STATUS_EVERY_N_FRAMES = 30
 CLOSE_BEFORE_ENTRY_DELAY = 0.2   # after Close click, before placing the limit
 
@@ -361,7 +361,6 @@ class MidbandWorker(QThread):
         self.sell_count = 0
         self.last_buy_time = 0
         self.last_sell_time = 0
-        self.last_executed_sig = None
         self.candidate_signal = None
         self.candidate_frames = 0
         self.button_pos = {}
@@ -381,9 +380,15 @@ class MidbandWorker(QThread):
         self.tracked = None
         self.last_reposition_time = 0.0
 
-        # 1510 RML tracking: a CHANGED label re-arms the dedup so every
-        # new HH/LL can trade, even at a previously traded price level
-        self.prev_r_lbl = None
+        # One trade per label EPISODE: after a BUY on an HH, buys stay
+        # disarmed until a DIFFERENT confirmed label (HL/LL/LH) appears,
+        # separating that HH from the next one. Mirror for SELL/LL.
+        # Confirmation needs RML_STABLE_FRAMES consecutive frames so a
+        # one-frame YOLO flicker cannot fake an episode change.
+        self.entry_armed = {"BUY": True, "SELL": True}
+        self.rml_confirmed = None
+        self.rml_candidate = None
+        self.rml_candidate_frames = 0
 
         # Pending Attach-To-Indicator for a freshly placed order
         self.attach_pending = None
@@ -888,13 +893,28 @@ class MidbandWorker(QThread):
 
                     signal, debug, matched_box = evaluate_frame(left_dets, right_dets)
 
-                    # Re-arm the dedup whenever the 1510 RML changes, so
-                    # EVERY new HH/LL can trade (even at a price level that
-                    # already traded once)
+                    # Label-episode tracking: confirm the 1510 RML over
+                    # RML_STABLE_FRAMES frames; a confirmed DIFFERENT label
+                    # re-arms the opposite entries (HL/LL/LH re-arms BUY,
+                    # anything but LL re-arms SELL)
                     r_lbl_now, _ = rightmost_label(*right_dets)
-                    if r_lbl_now != self.prev_r_lbl:
-                        self.prev_r_lbl = r_lbl_now
-                        self.last_executed_sig = None
+                    if r_lbl_now == self.rml_candidate:
+                        self.rml_candidate_frames += 1
+                    else:
+                        self.rml_candidate = r_lbl_now
+                        self.rml_candidate_frames = 1
+                    if (self.rml_candidate is not None and
+                            self.rml_candidate_frames >= RML_STABLE_FRAMES and
+                            self.rml_candidate != self.rml_confirmed):
+                        self.rml_confirmed = self.rml_candidate
+                        if self.rml_confirmed != "HH" and not self.entry_armed["BUY"]:
+                            self.entry_armed["BUY"] = True
+                            print(f"1510 RML now {self.rml_confirmed} - "
+                                  "BUY re-armed for the next HH")
+                        if self.rml_confirmed != "LL" and not self.entry_armed["SELL"]:
+                            self.entry_armed["SELL"] = True
+                            print(f"1510 RML now {self.rml_confirmed} - "
+                                  "SELL re-armed for the next LL")
 
                     if signal is not None and signal == self.candidate_signal:
                         self.candidate_frames += 1
@@ -905,25 +925,24 @@ class MidbandWorker(QThread):
                     decision = None
                     if signal and self.candidate_frames >= STABLE_FRAMES and not self.paused:
                         now = time.time()
-                        sig = (signal, round(matched_box[1] / Y_BUCKET) * Y_BUCKET)
                         cooldown_ok = (
                             (signal == "BUY" and self.mode in ("buy", "both")
                              and now - self.last_buy_time >= BUY_COOLDOWN) or
                             (signal == "SELL" and self.mode in ("sell", "both")
                              and now - self.last_sell_time >= SELL_COOLDOWN)
                         )
-                        # Same-side adds are allowed: every NEW 1510 HH/LL
-                        # places another entry; the area-color Close flattens
-                        # everything (and cancels resting orders) on a flip
-                        if cooldown_ok and sig != self.last_executed_sig:
+                        # One trade per label episode: firing DISARMS this
+                        # side until a different confirmed 1510 label appears
+                        # (see the episode tracking above)
+                        if cooldown_ok and self.entry_armed[signal]:
                             decision, click_yx = self.place_limit_at_line(signal, right_img)
                             if decision:
-                                self.last_executed_sig = sig
+                                self.entry_armed[signal] = False
                                 if signal == "BUY":
                                     self.last_buy_time = now
                                 else:
                                     self.last_sell_time = now
-                                self.log_event(f"LIMIT {decision} sig={sig} [{debug}]")
+                                self.log_event(f"LIMIT {decision} [{debug}]")
                                 save_trade_snapshot(decision, left_img, right_img,
                                                     left_dets, right_dets, click_yx)
 
