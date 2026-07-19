@@ -68,6 +68,15 @@ TRACK_DELAY_AFTER_PLACE = 0.8   # wait for the order tag to render
 REPOSITION_THRESHOLD_PX = 10    # move the order when the line moved this much
 REPOSITION_MIN_INTERVAL = 2.0   # seconds between cancel/replace cycles
 TAG_MISSING_FRAMES = 6          # tag gone this many frames -> filled/cancelled
+
+# ===== FEATURE SWITCHES =====
+# The ENTRY side (signal -> limit at the midband line) is proven and always
+# on. Everything else is opt-in, OFF by default, so the bot's core behavior
+# stays reliable while extras are verified one at a time:
+TRACK_ORDER = False   # move the resting limit with the line (cancel/replace).
+                      # Needs real-time speed - menus take ~2s per move.
+AUTO_CLOSE = False    # area-color exits + close-before-entry Close clicks.
+                      # Needs the Close button reachable (close.png or DOM).
 ORDER_MENU_MAX_HEIGHT = 170  # px; the order menu has ONE item ('Buy N @ .. Entry').
                              # A taller first menu means the right-click missed the
                              # tag and hit something else (e.g. a drawing object,
@@ -377,6 +386,14 @@ class MidbandWorker(QThread):
             f.write(f"{datetime.now().strftime('%H:%M:%S')} {text}\n")
 
     def close_position(self, reason):
+        if not AUTO_CLOSE:
+            # Auto-closing disabled: reset state so new entries are allowed,
+            # but never click - exits and cancels are managed manually
+            print(f"AUTO_CLOSE off ({reason}) - manage the exit manually")
+            self.log_event(f"AUTO_CLOSE OFF {self.position or 'order'} - {reason}")
+            self.position = None
+            self.tracked = None
+            return
         x, y = self.find_button("CLOSE")
         if not os.path.exists(CLOSE_BUTTON_IMG):
             # Ratio fallback in use: verify the dark Close button actually
@@ -517,7 +534,7 @@ class MidbandWorker(QThread):
         """Keep the resting limit attached to the midband line: cancel and
         re-place whenever the line moves. Stops once price touches the
         order level (assumed filled) or the tag disappears."""
-        if not self.tracked or self.paused:
+        if not TRACK_ORDER or not self.tracked or self.paused:
             return
         if time.time() - self.tracked["time"] < TRACK_DELAY_AFTER_PLACE:
             return
