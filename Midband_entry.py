@@ -71,6 +71,8 @@ ATTACH_INDICATOR_PREFIX = "mdtband"  # typed into the dialog dropdown to jump
 ATTACH_DOWNS = {"BUY": 2, "SELL": 3}     # BUY -> |MidlineUp, SELL -> |MidlineDn
 ATTACH_PLOT_NAME = {"BUY": "MidlineUp", "SELL": "MidlineDn"}
 ATTACH_DIALOG_TITLE = "Attach To Indicator Properties"
+PROPERTIES_ITEM_FRACTION = 0.72  # 'Properties' position within the popup
+                                 # (above it sits the disabled 'Enabled')
 ATTACH_DROPDOWN_RATIO = (0.74, 0.26)  # dropdown center within the dialog
 ATTACH_OK_RATIO = (0.59, 0.85)        # OK button center within the dialog
 ATTACH_DELAY_AFTER_PLACE = 0.6        # wait for the order tag to render
@@ -522,13 +524,23 @@ class MidbandWorker(QThread):
             for _ in range(2):
                 pyautogui.press('up')
                 time.sleep(0.15)
-            pyautogui.press('right')     # open Enabled/Properties submenu
-            time.sleep(0.45)
+            pre_right = grab()
+            pyautogui.press('right')     # open Enabled/Properties popup
+            time.sleep(0.5)
             shot3 = grab()
-            self._save_rpa_shot(ts, "3_after_keys", shot3)
-            pyautogui.press('down')      # skips disabled 'Enabled' -> Properties
-            time.sleep(0.15)
-            pyautogui.press('enter')     # activate Properties -> dialog opens
+
+            # 4) CLICK 'Properties' in the popup. Keyboard cannot be used
+            # here: the popup's first item ('Enabled') is disabled, so WPF
+            # keeps focus on the PARENT menu - a Down press moves the parent
+            # highlight to 'Auto Chase' instead of selecting 'Properties'
+            # (this was the recurring Auto Chase misfire). The popup opens
+            # over the chart, where screenshot-diff detects it reliably.
+            props_popup = find_new_menu(pre_right, shot3, min_area=4000)
+            self._save_rpa_shot(ts, "3_props_popup", shot3, props_popup)
+            if props_popup is None:
+                return fail("properties-popup", shot3)
+            click_in_grab(props_popup[0] + props_popup[2] // 2,
+                          props_popup[1] + int(props_popup[3] * PROPERTIES_ITEM_FRACTION))
             time.sleep(1.1)
 
         # 5) the properties dialog, located by window title
