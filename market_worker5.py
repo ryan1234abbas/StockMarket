@@ -113,6 +113,9 @@ class DetectionWorker(QThread):
         self.plus_minus = 5
         self.pending_trade = None
         self.trade_timeout = 2.0
+        # (3020 RML, 1510 RML) from the previous frame; primary trades require
+        # the same pair on 2 consecutive frames to filter single-frame flickers
+        self.prev_frame_signal = None
         
         # Yellow label detection states
         self.yellow_label_active = False
@@ -154,10 +157,13 @@ class DetectionWorker(QThread):
             if len(boxes) != len(labels) or len(boxes) != len(scores):
                 print(f"  MISMATCH: boxes={len(boxes)}, labels={len(labels)}, scores={len(scores)}")
             
+            # Yellow gets a lower bar: missing it means trading into a blocked
+            # zone, so err on the side of blocking.
             entries = [
                 (lbl, box, score)
                 for box, lbl, score in zip(boxes, labels, scores)
-                if score >= min_conf and lbl in valid_labels_set
+                if score >= (0.15 if lbl == "yellow_label" else min_conf)
+                and lbl in valid_labels_set
             ]
             if not entries:
                 return None, None
@@ -205,6 +211,16 @@ class DetectionWorker(QThread):
         print(f"3020: {rightmost_lbl_3020 or 'None'}")
         print(f"1510 RML: {rightmost_lbl_1510 or 'None'}")
         print(f"1510 SRML: {second_lbl_1510 or 'None'}")
+
+        # Two-frame confirmation: the same 3020+1510 combo must be seen on two
+        # consecutive frames before a primary trade may fire
+        current_signal = (rightmost_lbl_3020, rightmost_lbl_1510)
+        signal_stable = (
+            current_signal == self.prev_frame_signal
+            and rightmost_lbl_3020 is not None
+            and rightmost_lbl_1510 is not None
+        )
+        self.prev_frame_signal = current_signal
 
         # Yellow detection: block if yellow is RML/SRML in 1510 OR RML in 3020
         yellow_detected = (
@@ -269,14 +285,14 @@ class DetectionWorker(QThread):
         
         current_rml_1510 = rightmost_lbl_1510
         if self.rml_backward_lockout:
-            if rightmost_lbl_1510 and box_1510 and not hasattr(self, 'pending_srml'):
+            if rightmost_lbl_1510 and box_1510 and self.pending_srml is None:
                 self.pending_srml = (rightmost_lbl_1510, box_1510, score_1510)
-            
+
             second_lbl_1510 = None
             box_second_1510 = None
             score_second_1510 = None
 
-        elif (hasattr(self, 'pending_srml') and self.pending_srml and 
+        elif (self.pending_srml and
               current_rml_1510 != self.prev_rml_1510):
             
             stored_lbl, stored_box, stored_score = self.pending_srml
@@ -350,9 +366,10 @@ class DetectionWorker(QThread):
         # === PRIMARY TRADE: RML with candle alignment ===
         
         # BUY condition
-        if (not self.rml_backward_lockout and 
+        if (not self.rml_backward_lockout and
             not self.pending_trade and
-            rightmost_lbl_3020 == "HH"
+            signal_stable
+            and rightmost_lbl_3020 == "HH"
             and rightmost_lbl_1510 == "HL"
             and mode in ("buy", "both")
             and current_time - self.last_buy_time >= self.buy_cooldown
@@ -373,7 +390,6 @@ class DetectionWorker(QThread):
                 self.buy_count += 1
                 decision = "BUY"
                 self.srl_lockout_after_trade = True
-                self.pending_srl_trade = None
                 self.last_executed_pattern = pattern_sig
                 
                 pyautogui.hotkey('ctrl','b')
@@ -382,7 +398,8 @@ class DetectionWorker(QThread):
         # SELL condition
         elif (not self.rml_backward_lockout and
             not self.pending_trade and
-            rightmost_lbl_3020 == "LL"
+            signal_stable
+            and rightmost_lbl_3020 == "LL"
             and rightmost_lbl_1510 == "LH"
             and mode in ("sell", "both")
             and current_time - self.last_sell_time >= self.sell_cooldown
@@ -403,7 +420,6 @@ class DetectionWorker(QThread):
                 self.sell_count += 1
                 decision = "SELL"
                 self.srl_lockout_after_trade = True
-                self.pending_srl_trade = None
                 self.last_executed_pattern = pattern_sig
                 
                 pyautogui.hotkey('ctrl','m')
@@ -477,7 +493,7 @@ class DetectionWorker(QThread):
 
         filtered = [
             (b, l, s) for b, l, s in zip(boxes, labels, scores)
-            if l in valid_labels and s >= min_conf
+            if l in valid_labels and s >= (0.15 if l == "yellow_label" else min_conf)
         ]
 
         if not filtered:
@@ -602,13 +618,16 @@ class DetectionWorker(QThread):
                     left_boxes, left_scores, left_labels, left_conf = self.process_results(left_results)
                     right_boxes, right_scores, right_labels, right_conf = self.process_results(right_results)
 
-                    # NMS only - NO MERGING for 1510 to keep indices aligned
-                    keep_left = self.non_max_suppression_fast(left_boxes, left_scores, iou_thresh=0.5)
-                    merged_left = self.merge_vertically_close_boxes([left_boxes[i] for i in keep_left])
-                    merged_left_labels = [left_labels[i] for i in keep_left]
+                    # 3020: NMS then label-aware merge (boxes/labels/scores stay aligned)
+                    keep_left = self.non_max_suppression_fast(left_boxes, left_scores, left_labels, iou_thresh=0.5)
+                    merged_left, merged_left_labels, merged_left_scores = self.merge_vertically_close_boxes(
+                        [left_boxes[i] for i in keep_left],
+                        [left_labels[i] for i in keep_left],
+                        [left_scores[i] for i in keep_left],
+                    )
 
                     # For 1510: use NMS only, skip merging to maintain label/box/score alignment
-                    keep_right = self.non_max_suppression_fast(right_boxes, right_scores, iou_thresh=0.5)
+                    keep_right = self.non_max_suppression_fast(right_boxes, right_scores, right_labels, iou_thresh=0.5)
                     
                     # Create aligned arrays after NMS (no merging)
                     nms_right_boxes = [right_boxes[i] for i in keep_right]
@@ -639,6 +658,7 @@ class DetectionWorker(QThread):
                                         if ylbl == "yellow_label":
                                             merged_left.append(ybox)
                                             merged_left_labels.append("yellow_label")
+                                            merged_left_scores.append(yscore)
                                             break
                         
                         # Process yellow for RIGHT image (1510)
@@ -677,7 +697,7 @@ class DetectionWorker(QThread):
                                    if l == "candle" and candle_scores[i] >= scandle_conf]
 
                     decision = self.analyze_candles_tm(
-                        left_img, merged_left, merged_left_labels, left_conf,
+                        left_img, merged_left, merged_left_labels, merged_left_scores,
                         right_img, nms_right_boxes, nms_right_labels, nms_right_scores,
                         mode,
                         candle_boxes=candle_boxes,
@@ -751,11 +771,16 @@ class DetectionWorker(QThread):
 
         return boxes, scores, labels, scores
 
-    def non_max_suppression_fast(self, boxes, scores, iou_thresh=0.4):
+    def non_max_suppression_fast(self, boxes, scores, labels=None, iou_thresh=0.4):
         if not boxes:
             return []
         boxes = np.array(boxes)
         scores = np.array(scores)
+        # Candles and swing labels overlap by design on the chart; only let
+        # detections suppress each other within the same group.
+        groups = None
+        if labels is not None:
+            groups = np.array([lbl == "candle" for lbl in labels])
 
         x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
         areas = (x2 - x1 + 1) * (y2 - y1 + 1)
@@ -776,35 +801,46 @@ class DetectionWorker(QThread):
             inter = w * h
             iou = inter / (areas[i] + areas[order[1:]] - inter)
 
-            inds = np.where(iou <= iou_thresh)[0]
+            if groups is not None:
+                same_group = groups[order[1:]] == groups[i]
+                suppress = (iou > iou_thresh) & same_group
+                inds = np.where(~suppress)[0]
+            else:
+                inds = np.where(iou <= iou_thresh)[0]
             order = order[inds + 1]
 
         return keep
 
-    def merge_vertically_close_boxes(self, boxes, y_thresh=30, x_thresh=15):
-        merged = []
+    def merge_vertically_close_boxes(self, boxes, labels, scores, y_thresh=30, x_thresh=15):
+        """Merge vertically stacked boxes of the SAME label, keeping labels/scores
+        aligned with the merged box list (merged entry takes the highest score)."""
+        merged_boxes, merged_labels, merged_scores = [], [], []
         used = set()
 
         for i, box1 in enumerate(boxes):
             if i in used:
                 continue
             x1a, y1a, x2a, y2a = box1
-            group = [box1]
+            group = [(box1, scores[i])]
             for j, box2 in enumerate(boxes):
                 if j <= i or j in used:
+                    continue
+                if labels[j] != labels[i]:
                     continue
                 x1b, y1b, x2b, y2b = box2
                 if abs(x1a - x1b) < x_thresh and abs(x2a - x2b) < x_thresh:
                     if abs(y1a - y2b) < y_thresh or abs(y2a - y1b) < y_thresh:
-                        group.append(box2)
+                        group.append((box2, scores[j]))
                         used.add(j)
 
-            xs = [b[0] for b in group] + [b[2] for b in group]
-            ys = [b[1] for b in group] + [b[3] for b in group]
-            merged.append([min(xs), min(ys), max(xs), max(ys)])
+            xs = [b[0] for b, _ in group] + [b[2] for b, _ in group]
+            ys = [b[1] for b, _ in group] + [b[3] for b, _ in group]
+            merged_boxes.append([min(xs), min(ys), max(xs), max(ys)])
+            merged_labels.append(labels[i])
+            merged_scores.append(max(s for _, s in group))
             used.add(i)
 
-        return merged
+        return merged_boxes, merged_labels, merged_scores
 
 class MarketWorker:
     def __init__(self):      
