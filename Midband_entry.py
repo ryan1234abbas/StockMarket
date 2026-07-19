@@ -385,16 +385,22 @@ class MidbandWorker(QThread):
             f.write(f"{datetime.now().strftime('%H:%M:%S')} {text}\n")
 
     def close_position(self, reason):
-        # Closing is inactive until close.png exists: without it the fallback
-        # position points at the removed DOM, so clicking would be a no-op
-        # (or a stray click). State still resets so new entries are allowed.
-        if not os.path.exists(CLOSE_BUTTON_IMG):
-            print(f"CLOSE SKIPPED ({reason}) - closing disabled, manage exits manually")
-            self.log_event(f"CLOSE SKIPPED {self.position or 'order'} - {reason}")
-            self.position = None
-            self.attach_pending = None
-            return
         x, y = self.find_button("CLOSE")
+        if not os.path.exists(CLOSE_BUTTON_IMG):
+            # Ratio fallback in use: verify the dark Close button actually
+            # sits at that spot (the DOM may be absent from the layout).
+            # Chart background there is light (~180+); the button is dark.
+            with mss.mss() as sct:
+                probe = np.array(sct.grab({"left": x - 3, "top": y - 3,
+                                           "width": 7, "height": 7,
+                                           "mon": 1}))[:, :, :3]
+            if probe.mean() > 110:
+                print(f"CLOSE SKIPPED ({reason}) - no Close button at the "
+                      "expected DOM position; manage exits manually")
+                self.log_event(f"CLOSE SKIPPED {self.position or 'order'} - {reason}")
+                self.position = None
+                self.attach_pending = None
+                return
         pyautogui.click(x, y)
         self.close_count += 1
         print(f"CLOSED {self.position or 'order'} - {reason}")
@@ -513,19 +519,17 @@ class MidbandWorker(QThread):
                 return fail("order-submenu", shot2)
             self._save_rpa_shot(ts, "2_submenu", shot2, submenu)
 
-            # 3) keyboard-navigate the OPEN submenu. Clicking is unreliable
-            # here: the submenu can overlap the light-gray DOM panel, where
-            # screenshot-diff cannot see its true extent (gray on gray).
-            # Items: Cancel Order, Increase Price, Decrease Price,
-            # Attach To Indicator, Auto Chase. Navigate UPWARD: 2 Ups reach
-            # 'Attach To Indicator' whether or not the first item is
-            # pre-highlighted (both wrap to the bottom the same way; Downs
-            # overshoot by one when 'Cancel Order' starts highlighted).
-            for _ in range(2):
-                pyautogui.press('up')
-                time.sleep(0.15)
-            pre_right = grab()
-            pyautogui.press('right')     # open Enabled/Properties popup
+            # 3) select 'Attach To Indicator' by typing its first letter.
+            # Positional Up/Down navigation CANNOT be trusted: the item
+            # count varies ('Auto Chase' only exists when an ATM strategy
+            # is active). 'a' matches 'Attach To Indicator' first in both
+            # layouts; when it is the only 'a' item the match activates it
+            # directly (popup opens), otherwise Right opens the highlighted
+            # item. Both paths end with the Enabled/Properties popup open.
+            pre_keys = grab()
+            pyautogui.press('a')
+            time.sleep(0.3)
+            pyautogui.press('right')
             time.sleep(0.5)
             shot3 = grab()
 
@@ -535,7 +539,7 @@ class MidbandWorker(QThread):
             # highlight to 'Auto Chase' instead of selecting 'Properties'
             # (this was the recurring Auto Chase misfire). The popup opens
             # over the chart, where screenshot-diff detects it reliably.
-            props_popup = find_new_menu(pre_right, shot3, min_area=4000)
+            props_popup = find_new_menu(pre_keys, shot3, min_area=4000)
             self._save_rpa_shot(ts, "3_props_popup", shot3, props_popup)
             if props_popup is None:
                 return fail("properties-popup", shot3)
@@ -603,7 +607,15 @@ class MidbandWorker(QThread):
             return
 
         self.attach_pending["attempts"] += 1
-        tag = find_order_tag(right_img, self.attach_pending["y"])
+        # Aim at the tag nearest the midband line's CURRENT position: the
+        # fresh order sits on the line, while stale orders (and the stored
+        # placement y) drift away as the chart rescales. With two resting
+        # orders the stored y once picked the WRONG order's tag.
+        side_pending = self.attach_pending["side"]
+        line_bgr = BUY_LINE_BGR if side_pending == "BUY" else SELL_LINE_BGR
+        line_hit = detect_line(right_img, line_bgr)
+        y_hint = line_hit[0] if line_hit is not None else self.attach_pending["y"]
+        tag = find_order_tag(right_img, y_hint)
         if tag is not None:
             side = self.attach_pending["side"]
             if self.attach_order_to_indicator(side, tag):
@@ -651,12 +663,12 @@ class MidbandWorker(QThread):
                     return msvcrt.getch().decode("utf-8").lower()
                 return None
 
+        print("Locating Close button...")
+        self.find_button("CLOSE")
         if not os.path.exists(CLOSE_BUTTON_IMG):
-            print("NOTE: close.png not found - automatic closing/cancelling is OFF; "
-                  "manage exits and resting orders manually.")
-        else:
-            print("Locating Close button...")
-            self.find_button("CLOSE")
+            print("NOTE: close.png not found - using the DOM ratio position for "
+                  "Close, verified by pixel color before every click (skipped "
+                  "automatically if the DOM is not on screen).")
 
         print("Keys (console window must be focused): "
               "p=pause/resume  b=buy only  s=sell only  a=both  d=debug dump  q=quit")
