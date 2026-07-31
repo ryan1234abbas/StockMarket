@@ -383,6 +383,27 @@ class ConfluenceWorker(QThread):
             self.sell_count += 1
         return side
 
+    def save_region_overlay(self):
+        """Full-screen capture with the three panel boxes drawn on it, so the
+        panel ratios can be checked against the real subpanels. This is the
+        ground-truth artifact for placing PRICE/RSI/BB_PANEL correctly."""
+        with mss.mss() as sct:
+            mon = sct.monitors[1]
+            full = np.array(sct.grab(mon))[:, :, :3].copy()
+        mh, mw = full.shape[:2]
+        for name, box, color in (("PRICE", PRICE_PANEL, (0, 0, 255)),
+                                  ("RSI", RSI_PANEL, (0, 255, 0)),
+                                  ("BB", BB_PANEL, (255, 0, 0))):
+            x1, y1, x2, y2 = box
+            p1 = (int(mw * x1), int(mh * y1))
+            p2 = (int(mw * x2), int(mh * y2))
+            cv2.rectangle(full, p1, p2, color, 3)
+            cv2.putText(full, name, (p1[0] + 5, p1[1] + 28),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+        cv2.imwrite("confluence_regions.png", full)
+        print("Saved confluence_regions.png (full screen with panel boxes) - "
+              "check the RSI/BB boxes land on the real subpanels")
+
     def save_calibration(self, price, rsi, bb, states):
         # Upscale each panel to a readable fixed width and stack them, so the
         # verdicts and the actual chart geometry are legible in the dump.
@@ -481,6 +502,7 @@ class ConfluenceWorker(QThread):
                     if self.frame_count == 0:
                         self.save_calibration(grabs["price"], grabs["rsi"],
                                               grabs["bb"], states)
+                        self.save_region_overlay()
 
                     # Re-arm a side once the alignment is broken
                     if signal != "BUY" and not self.entry_armed["BUY"]:
@@ -552,6 +574,7 @@ class ConfluenceWorker(QThread):
                     elif key == 'd':
                         self.save_calibration(grabs["price"], grabs["rsi"],
                                               grabs["bb"], states)
+                        self.save_region_overlay()
                     elif key == 'q':
                         self.running = False
                         runtime = time.time() - start_run
