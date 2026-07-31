@@ -31,9 +31,14 @@ pyautogui.PAUSE = 0.01
 
 # Panels of the RIGHTMOST chart as ratios of the FULL screen (x1,y1,x2,y2),
 # measured from the user's reference screenshot (4-chart layout, DOM far right)
-PRICE_PANEL = (0.700, 0.030, 0.863, 0.715)
-RSI_PANEL   = (0.700, 0.722, 0.863, 0.782)
-BB_PANEL    = (0.700, 0.790, 0.863, 0.943)
+# Vertical ratios measured from the region-overlay ground truth (4th chart,
+# MES 1510). RSI = the smooth blue/red line subpanel (dotted 50 line + dashed
+# 70/30 levels); BB = the dotted green/red band subpanel (solid blue zero line
+# at ~0.789). Earlier ratios were one panel too low - green sat on the BB
+# bands and blue caught the x-axis.
+PRICE_PANEL = (0.700, 0.030, 0.863, 0.695)
+RSI_PANEL   = (0.700, 0.699, 0.863, 0.734)
+BB_PANEL    = (0.700, 0.738, 0.863, 0.862)
 # The panel boxes intentionally overshoot into the price axis; the true
 # plot edge is FOUND from the background shading each frame, and only a
 # window hugging that edge is analyzed - so color flips register
