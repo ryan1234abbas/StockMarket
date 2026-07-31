@@ -36,9 +36,14 @@ RSI_PANEL   = (0.700, 0.722, 0.863, 0.782)
 BB_PANEL    = (0.700, 0.790, 0.863, 0.943)
 # The panel boxes intentionally overshoot into the price axis; the true
 # plot edge is FOUND from the background shading each frame, and only a
-# tight window hugging that edge is analyzed - so color flips register
-# immediately instead of waiting to fill a stale wide window
+# window hugging that edge is analyzed - so color flips register
+# immediately instead of waiting to fill a stale wide window.
+# Price uses a TIGHT window for fast trigger-color response. RSI/BB need
+# more horizontal width to separate the moving lines from the fixed
+# 50/zero reference lines (in a very narrow window a moving line looks
+# horizontal and gets mistaken for a reference line).
 TIGHT_WINDOW = 40
+RSIBB_WINDOW = 120
 
 # DOM buttons (template image first, ratio fallback measured from the layout)
 BUY_BUTTON_RATIO = (0.9275, 0.0536)
@@ -275,6 +280,31 @@ def detect_bb(win_bgr):
     return ("ABOVE" if yb < y0 else "BELOW"), y0
 
 
+def diagnostics(price_win, rsi_win, bb_win):
+    """Raw measurements behind each verdict, for the 'd' calibration dump
+    and the log - so a blocking condition can be seen, not guessed."""
+    hsv = cv2.cvtColor(price_win, cv2.COLOR_BGR2HSV)
+    bgm = _bg_mask(price_win)
+    h = hsv[:, :, 0]
+    bg_g = int((bgm & (h >= BG_GREEN_HUE[0]) & (h <= BG_GREEN_HUE[1])).sum())
+    bg_m = int((bgm & (h >= BG_MAGENTA_HUE[0]) & (h <= BG_MAGENTA_HUE[1])).sum())
+
+    def blob(center):
+        t = np.array(center, np.int16)
+        lo = np.clip(t - MIDBAND_TOL, 0, 255).astype(np.uint8)
+        hi = np.clip(t + MIDBAND_TOL, 0, 255).astype(np.uint8)
+        m = cv2.inRange(price_win, lo, hi)
+        n, _, st, _ = cv2.connectedComponentsWithStats(m, 8)
+        return max((int(st[i, cv2.CC_STAT_AREA]) for i in range(1, n)), default=0)
+
+    lg = int(cv2.inRange(hsv, LARGE_GREEN_HSV_LO, LARGE_GREEN_HSV_HI).sum() // 255)
+    _, rsi_y = detect_rsi(rsi_win)
+    _, bb_y = detect_bb(bb_win)
+    return (f"bg[g={bg_g},m={bg_m}] mid[g={blob(MIDBAND_GREEN_BGR)},"
+            f"m={blob(MIDBAND_MAGENTA_BGR)}] large[g={lg}] "
+            f"rsi[y50={rsi_y}] bb[y0={bb_y}]")
+
+
 def evaluate(price_win, rsi_win, bb_win):
     """Returns (signal, states-dict). BUY only when every condition is
     green/above; SELL only when every condition is magenta/below."""
@@ -354,18 +384,36 @@ class ConfluenceWorker(QThread):
         return side
 
     def save_calibration(self, price, rsi, bb, states):
-        vis = np.vstack([
-            price,
-            np.full((4, price.shape[1], 3), 255, np.uint8),
-            cv2.resize(rsi, (price.shape[1], rsi.shape[0])),
-            np.full((4, price.shape[1], 3), 255, np.uint8),
-            cv2.resize(bb, (price.shape[1], bb.shape[0])),
-        ])
-        txt = "  ".join(f"{k}={v or '?'}" for k, v in states.items())
-        cv2.putText(vis, txt, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                    (0, 0, 255), 2)
+        # Upscale each panel to a readable fixed width and stack them, so the
+        # verdicts and the actual chart geometry are legible in the dump.
+        W = 340
+
+        def up(img, tag):
+            scaled = cv2.resize(img, (W, max(40, int(img.shape[0] * W / img.shape[1]))),
+                                interpolation=cv2.INTER_NEAREST)
+            cv2.putText(scaled, tag, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (0, 0, 0), 2)
+            cv2.putText(scaled, tag, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (255, 255, 255), 1)
+            return scaled
+
+        sep = np.full((3, W, 3), 200, np.uint8)
+        header = np.full((70, W, 3), 30, np.uint8)
+        want = "BUY: all GREEN/ABOVE   SELL: all MAGENTA/BELOW"
+        line1 = f"bg={states['bg']} mid={states['mid']} large={states['large']}"
+        line2 = f"small={states['small']} rsi={states['rsi']} bb={states['bb']}"
+        for i, t in enumerate((line1, line2)):
+            cv2.putText(header, t, (6, 26 + i * 26), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, (0, 255, 255), 1)
+        vis = np.vstack([header,
+                         up(price, "PRICE (bg/mid/large/small)"), sep,
+                         up(rsi, "RSI panel"), sep,
+                         up(bb, "BB panel")])
         cv2.imwrite("confluence_debug.png", vis)
-        print(f"Saved confluence_debug.png [{txt}]")
+        diag = diagnostics(price, rsi, bb)
+        txt = "  ".join(f"{k}={v or '?'}" for k, v in states.items())
+        print(f"Saved confluence_debug.png [{txt}]  {diag}")
+        self.log_event(f"CALIB {txt}  {diag}")
 
     def run(self):
         if os.name == "posix":
@@ -419,9 +467,13 @@ class ConfluenceWorker(QThread):
                     # background shading (all panels share the same x range),
                     # then analyze only the tight window hugging it
                     edge = plot_right_edge_col(fulls["price"])
-                    x0 = max(0, edge - TIGHT_WINDOW)
-                    grabs = {name: np.ascontiguousarray(img[:, x0:edge, :])
-                             for name, img in fulls.items()}
+                    xp = max(0, edge - TIGHT_WINDOW)
+                    xw = max(0, edge - RSIBB_WINDOW)
+                    grabs = {
+                        "price": np.ascontiguousarray(fulls["price"][:, xp:edge, :]),
+                        "rsi": np.ascontiguousarray(fulls["rsi"][:, xw:edge, :]),
+                        "bb": np.ascontiguousarray(fulls["bb"][:, xw:edge, :]),
+                    }
 
                     signal, states = evaluate(grabs["price"], grabs["rsi"],
                                               grabs["bb"])
