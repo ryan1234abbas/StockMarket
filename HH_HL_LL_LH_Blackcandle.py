@@ -63,10 +63,14 @@ STABLE_FRAMES = 2        # consecutive frames a signal must repeat before firing
 BUY_COOLDOWN = 3.0       # seconds between buys
 SELL_COOLDOWN = 3.0      # seconds between sells
 X_TOLERANCE = 15         # candle center may be this far outside the label box (px)
-Y_BUCKET = 15            # px bucket (price level) for the pattern-dedup signature;
-                         # y is stable under horizontal chart scroll, unlike x
 EDGE_ZONE_RATIO = 0.30   # 1510 pattern label must be in the rightmost 30% of the
                          # chart - old labels that scrolled left are not tradeable
+RML_STABLE_FRAMES = 3    # frames a 1510 label must hold to confirm an episode
+MIN_SIGNAL_HOLD = 2.0    # seconds a signal must hold before it may trade -
+                         # labels at the developing extreme repaint, and the
+                         # old y-bucket dedup re-fired the SAME pattern as
+                         # autoscaling drifted its pixel position (3 sells in
+                         # 10s at y=1185/1170/1155 in the 19:08 run)
 STATUS_EVERY_N_FRAMES = 30
 
 VALID_LABELS = {"HH", "HL", "LL", "LH"}
@@ -228,10 +232,19 @@ class Worker7(QThread):
         self.sell_count = 0
         self.last_buy_time = 0
         self.last_sell_time = 0
-        self.last_executed_sig = None
         self.candidate_signal = None
         self.candidate_frames = 0
+        self.candidate_since = 0.0
         self.button_pos = {}
+
+        # One trade per label EPISODE (ported from Midband_entry): a BUY on
+        # an HL disarms buys until a DIFFERENT confirmed 1510 label appears;
+        # mirror for SELL/LH. Replaces the y-bucket dedup, which re-fired
+        # the same pattern as chart autoscaling drifted label pixels.
+        self.entry_armed = {"BUY": True, "SELL": True}
+        self.rml_confirmed = None
+        self.rml_candidate = None
+        self.rml_candidate_frames = 0
 
         # Position + 1510 area-color exit tracking
         self.position = None          # None | "LONG" | "SHORT"
@@ -395,28 +408,53 @@ class Worker7(QThread):
                         with open("worker7_debug.log", "a") as f:
                             f.write(f"{datetime.now().strftime('%H:%M:%S')} NEAR-MISS: {near_miss}\n")
 
-                    # Debounce: same signal on STABLE_FRAMES consecutive frames
+                    # Label-episode tracking: confirm the 1510 RML over
+                    # RML_STABLE_FRAMES frames; a confirmed DIFFERENT label
+                    # re-arms the entries it separates (non-HL re-arms BUY,
+                    # non-LH re-arms SELL)
+                    r_lbl_now, _ = rightmost_label(*right_dets)
+                    if r_lbl_now == self.rml_candidate:
+                        self.rml_candidate_frames += 1
+                    else:
+                        self.rml_candidate = r_lbl_now
+                        self.rml_candidate_frames = 1
+                    if (self.rml_candidate is not None and
+                            self.rml_candidate_frames >= RML_STABLE_FRAMES and
+                            self.rml_candidate != self.rml_confirmed):
+                        self.rml_confirmed = self.rml_candidate
+                        if self.rml_confirmed != "HL" and not self.entry_armed["BUY"]:
+                            self.entry_armed["BUY"] = True
+                            print(f"1510 RML now {self.rml_confirmed} - "
+                                  "BUY re-armed for the next HL pattern")
+                        if self.rml_confirmed != "LH" and not self.entry_armed["SELL"]:
+                            self.entry_armed["SELL"] = True
+                            print(f"1510 RML now {self.rml_confirmed} - "
+                                  "SELL re-armed for the next LH pattern")
+
+                    # Debounce: same signal on STABLE_FRAMES consecutive
+                    # frames AND held for MIN_SIGNAL_HOLD seconds (labels on
+                    # the developing brick are provisional and repaint)
                     if signal is not None and signal == self.candidate_signal:
                         self.candidate_frames += 1
                     else:
                         self.candidate_signal = signal
                         self.candidate_frames = 1 if signal else 0
+                        self.candidate_since = time.time()
 
                     decision = None
-                    if signal and self.candidate_frames >= STABLE_FRAMES and not self.paused:
+                    if (signal and self.candidate_frames >= STABLE_FRAMES and
+                            time.time() - self.candidate_since >= MIN_SIGNAL_HOLD and
+                            not self.paused):
                         now = time.time()
-                        # Keyed on label + price level (y): stable under scroll,
-                        # so one pattern can only ever trade once
-                        sig = (signal, round(matched_box[1] / Y_BUCKET) * Y_BUCKET)
                         cooldown_ok = (
                             (signal == "BUY" and self.mode in ("buy", "both")
                              and now - self.last_buy_time >= BUY_COOLDOWN) or
                             (signal == "SELL" and self.mode in ("sell", "both")
                              and now - self.last_sell_time >= SELL_COOLDOWN)
                         )
-                        if cooldown_ok and sig is not None and sig != self.last_executed_sig:
+                        if cooldown_ok and self.entry_armed[signal]:
                             decision = self.execute_trade(signal)
-                            self.last_executed_sig = sig
+                            self.entry_armed[signal] = False
                             if signal == "BUY":
                                 self.last_buy_time = now
                             else:
@@ -425,7 +463,7 @@ class Worker7(QThread):
                             # Forensics: log + annotated snapshots of what was seen
                             with open("worker7_debug.log", "a") as f:
                                 f.write(f"{datetime.now().strftime('%H:%M:%S')} "
-                                        f"TRADE {decision} sig={sig} [{debug}]\n")
+                                        f"TRADE {decision} [{debug}]\n")
                             save_trade_snapshot(decision, left_img, right_img,
                                                 left_dets, right_dets)
 
