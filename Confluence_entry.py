@@ -34,7 +34,11 @@ pyautogui.PAUSE = 0.01
 PRICE_PANEL = (0.700, 0.030, 0.863, 0.715)
 RSI_PANEL   = (0.700, 0.722, 0.863, 0.782)
 BB_PANEL    = (0.700, 0.790, 0.863, 0.943)
-EDGE_WINDOW = 120        # rightmost pixels of each panel that are analyzed
+# The panel boxes intentionally overshoot into the price axis; the true
+# plot edge is FOUND from the background shading each frame, and only a
+# tight window hugging that edge is analyzed - so color flips register
+# immediately instead of waiting to fill a stale wide window
+TIGHT_WINDOW = 40
 
 # DOM buttons (template image first, ratio fallback measured from the layout)
 BUY_BUTTON_RATIO = (0.9275, 0.0536)
@@ -46,11 +50,11 @@ SELL_BUTTON_IMG = "sell_mkt.png"
 MIDBAND_GREEN_BGR = (4, 255, 129)     # thick chartreuse band (as Midband_entry)
 MIDBAND_MAGENTA_BGR = (255, 4, 255)   # thick magenta band
 MIDBAND_TOL = 60
-MIDBAND_MIN_BLOB = 150   # px; the midband is thick - small flecks don't count
+MIDBAND_MIN_BLOB = 80    # px; the midband is thick - small flecks don't count
 
 LARGE_GREEN_HSV_LO = (35, 100, 50)    # dark-green thick trigger curves
 LARGE_GREEN_HSV_HI = (85, 255, 190)
-LARGE_MIN_PIXELS = 80
+LARGE_MIN_PIXELS = 40
 
 SMALL_GREEN_HSV_LO = (35, 120, 170)   # bright thin green trigger lines
 SMALL_GREEN_HSV_HI = (85, 255, 255)
@@ -58,15 +62,16 @@ SMALL_RED_HSV_LO1 = (0, 140, 140)     # bright thin red trigger lines
 SMALL_RED_HSV_HI1 = (10, 255, 255)
 SMALL_RED_HSV_LO2 = (170, 140, 140)
 SMALL_RED_HSV_HI2 = (180, 255, 255)
-SMALL_MIN_PIXELS = 40
+SMALL_MIN_PIXELS = 20
 LINE_MAX_FILL = 0.45     # line-like components only (bricks are solid boxes)
-LINE_MIN_SPAN = 35       # a line component spans at least this many px
+LINE_MIN_SPAN = 20       # a line component spans at least this many px
+                         # (the analysis window is only TIGHT_WINDOW wide)
 
 BG_GREEN_HUE = (30, 90)      # pale background shading, low saturation
 BG_MAGENTA_HUE = (110, 175)
 BG_SAT = (8, 110)
 BG_VAL_MIN = 100
-BG_MIN_PIXELS = 400
+BG_MIN_PIXELS = 150
 
 RSI_BLUE = dict(b_min=170, g_max=140, r_max=140)   # RSI line colors
 RSI_RED = dict(r_min=170, g_max=140, b_max=140)
@@ -86,6 +91,27 @@ MIN_SIGNAL_HOLD = 2.0    # seconds the alignment must hold before trading
 BUY_COOLDOWN = 3.0
 SELL_COOLDOWN = 3.0
 STATUS_EVERY_N_FRAMES = 30
+
+
+def _bg_mask(win_bgr):
+    """Mask of the pale background shading (green or magenta family)."""
+    hsv = cv2.cvtColor(win_bgr, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    base = (s >= BG_SAT[0]) & (s <= BG_SAT[1]) & (v >= BG_VAL_MIN)
+    green = base & (h >= BG_GREEN_HUE[0]) & (h <= BG_GREEN_HUE[1])
+    magenta = base & (h >= BG_MAGENTA_HUE[0]) & (h <= BG_MAGENTA_HUE[1])
+    return (green | magenta)
+
+
+def plot_right_edge_col(price_bgr):
+    """Rightmost column of the chart PLOT area, found via the background
+    shading - everything right of it is the price axis (gray, no shading).
+    All panels share the same x range, so one edge serves all three."""
+    mask = _bg_mask(price_bgr)
+    h = price_bgr.shape[0]
+    cols = mask.sum(axis=0)
+    shaded = np.where(cols >= h * 0.25)[0]
+    return int(shaded[-1]) + 1 if shaded.size else price_bgr.shape[1]
 
 
 def _mask_components(mask, min_span=0, max_fill=1.0, min_area=1):
@@ -138,18 +164,18 @@ def detect_midband(win_bgr):
 
 
 def detect_large_triggers(win_bgr):
-    """'GREEN' if the dark-green thick trigger curves are present near the
-    edge; 'MAGENTA' if only magenta is. (Magenta is shared with the midband,
-    so green presence wins - per the strategy, buys need green triggers.)"""
+    """'GREEN' / 'MAGENTA' by DOMINANCE in the tight edge window - no
+    green-first bias, so a color flip registers as soon as the new color
+    outweighs the old one at the right edge."""
     hsv = cv2.cvtColor(win_bgr, cv2.COLOR_BGR2HSV)
     green = int(cv2.inRange(hsv, LARGE_GREEN_HSV_LO, LARGE_GREEN_HSV_HI).sum() // 255)
     t = np.array(MIDBAND_MAGENTA_BGR, np.int16)
     lo = np.clip(t - MIDBAND_TOL, 0, 255).astype(np.uint8)
     hi = np.clip(t + MIDBAND_TOL, 0, 255).astype(np.uint8)
     magenta = int(cv2.inRange(win_bgr, lo, hi).sum() // 255)
-    if green >= LARGE_MIN_PIXELS:
+    if green >= LARGE_MIN_PIXELS and green > magenta * 1.2:
         return "GREEN"
-    if magenta >= LARGE_MIN_PIXELS:
+    if magenta >= LARGE_MIN_PIXELS and magenta > green * 1.2:
         return "MAGENTA"
     return None
 
@@ -387,10 +413,15 @@ class ConfluenceWorker(QThread):
 
             try:
                 while self.running:
-                    grabs = {}
-                    for name, reg in regions.items():
-                        img = np.array(sct.grab(reg))[:, :, :3]
-                        grabs[name] = np.ascontiguousarray(img[:, -EDGE_WINDOW:, :])
+                    fulls = {name: np.array(sct.grab(reg))[:, :, :3]
+                             for name, reg in regions.items()}
+                    # Locate the true plot edge from the price panel's
+                    # background shading (all panels share the same x range),
+                    # then analyze only the tight window hugging it
+                    edge = plot_right_edge_col(fulls["price"])
+                    x0 = max(0, edge - TIGHT_WINDOW)
+                    grabs = {name: np.ascontiguousarray(img[:, x0:edge, :])
+                             for name, img in fulls.items()}
 
                     signal, states = evaluate(grabs["price"], grabs["rsi"],
                                               grabs["bb"])
