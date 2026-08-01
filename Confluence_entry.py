@@ -53,8 +53,18 @@ RSIBB_WINDOW = 120
 # DOM buttons (template image first, ratio fallback measured from the layout)
 BUY_BUTTON_RATIO = (0.9275, 0.0536)
 SELL_BUTTON_RATIO = (0.9740, 0.0536)
+# Close button of the RIGHTMOST chart's DOM (Rev/Close row). Measured from
+# the region overlay against the known Sell button position. Ratio-only (no
+# template): there are multiple Close buttons on screen, and a template match
+# could hit the wrong chart's DOM and close the wrong position.
+CLOSE_BUTTON_RATIO = (0.9740, 0.1680)
 BUY_BUTTON_IMG = "buy_mkt.png"
 SELL_BUTTON_IMG = "sell_mkt.png"
+
+# Exit: once in a trade, close it when the full alignment for that direction
+# breaks (any one of the six conditions stops matching). A few-frame confirm
+# stops a single-frame detector glitch from closing a good trade.
+EXIT_STABLE_FRAMES = 3
 
 # --- color definitions (BGR centers +/- tolerance). Tune via 'd' dumps. ---
 MIDBAND_GREEN_BGR = (4, 255, 129)     # thick chartreuse band (as Midband_entry)
@@ -380,6 +390,10 @@ class ConfluenceWorker(QThread):
         self.candidate_since = 0.0
         # Fire once per alignment episode; re-arm when alignment breaks
         self.entry_armed = {"BUY": True, "SELL": True}
+        # Open position + exit tracking
+        self.position = None          # None | "LONG" | "SHORT"
+        self.close_count = 0
+        self.exit_broken_frames = 0
 
     def log_event(self, text):
         with open("confluence_debug.log", "a") as f:
@@ -411,9 +425,24 @@ class ConfluenceWorker(QThread):
         pyautogui.click(x, y)
         if side == "BUY":
             self.buy_count += 1
+            self.position = "LONG"
         else:
             self.sell_count += 1
+            self.position = "SHORT"
+        self.exit_broken_frames = 0
         return side
+
+    def close_position(self, reason):
+        # Ratio-only click on the rightmost chart's Close button (never a
+        # template match - would risk closing a different chart's position)
+        sw, sh = pyautogui.size()
+        pyautogui.click(int(sw * CLOSE_BUTTON_RATIO[0]),
+                        int(sh * CLOSE_BUTTON_RATIO[1]))
+        self.close_count += 1
+        print(f"CLOSED {self.position} - {reason}")
+        self.log_event(f"CLOSE {self.position} - {reason}")
+        self.position = None
+        self.exit_broken_frames = 0
 
     def save_region_overlay(self):
         """Full-screen capture with the three panel boxes drawn on it, so the
@@ -536,6 +565,23 @@ class ConfluenceWorker(QThread):
                                               grabs["bb"], states)
                         self.save_region_overlay()
 
+                    # EXIT: close the open position as soon as its full
+                    # alignment breaks (any one of the six conditions no
+                    # longer matches). Confirmed over a few frames so a
+                    # single-frame detector glitch cannot close a good trade.
+                    if self.position is not None and not self.paused:
+                        want = "BUY" if self.position == "LONG" else "SELL"
+                        if signal == want:
+                            self.exit_broken_frames = 0
+                        else:
+                            self.exit_broken_frames += 1
+                            if self.exit_broken_frames >= EXIT_STABLE_FRAMES:
+                                broke = [k for k, v in states.items()
+                                         if v not in ("GREEN" if want == "BUY" else "MAGENTA",
+                                                      "ABOVE" if want == "BUY" else "BELOW")]
+                                self.close_position("conditions no longer met: "
+                                                    + ",".join(broke))
+
                     # Re-arm a side once the alignment is broken
                     if signal != "BUY" and not self.entry_armed["BUY"]:
                         self.entry_armed["BUY"] = True
@@ -552,7 +598,8 @@ class ConfluenceWorker(QThread):
                         self.candidate_since = time.time()
 
                     decision = None
-                    if (signal and self.candidate_frames >= STABLE_FRAMES and
+                    if (signal and self.position is None and
+                            self.candidate_frames >= STABLE_FRAMES and
                             time.time() - self.candidate_since >= MIN_SIGNAL_HOLD and
                             not self.paused):
                         now = time.time()
@@ -585,10 +632,10 @@ class ConfluenceWorker(QThread):
                         fps = self.frame_count / max(0.001, time.time() - start_run)
                         txt = " ".join(f"{k}={v or '-'}" for k, v in states.items())
                         print(f"Frame {self.frame_count}: {txt} "
-                              f"signal={signal or '-'} mode={self.mode}"
-                              f"{' PAUSED' if self.paused else ''} "
+                              f"signal={signal or '-'} pos={self.position or '-'} "
+                              f"mode={self.mode}{' PAUSED' if self.paused else ''} "
                               f"buys={self.buy_count} sells={self.sell_count} "
-                              f"({fps:.1f} fps)")
+                              f"closes={self.close_count} ({fps:.1f} fps)")
 
                     key = get_key()
                     if key == 'p':
@@ -620,6 +667,8 @@ class ConfluenceWorker(QThread):
                             f"Final mode: {self.mode}\n"
                             f"Final number of buys: {self.buy_count}\n"
                             f"Final number of sells: {self.sell_count}\n"
+                            f"Number of closes: {self.close_count}\n"
+                            f"Open position at exit: {self.position or 'none'}\n"
                         )
                         print(log_content)
                         with open("log.txt", "a") as log_file:
