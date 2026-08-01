@@ -284,11 +284,13 @@ def detect_bb(win_bgr):
     b = win_bgr[:, :, 0].astype(np.int16)
     g = win_bgr[:, :, 1].astype(np.int16)
     r = win_bgr[:, :, 2].astype(np.int16)
-    blue = ((b >= BB_ZERO_BLUE["b_min"]) & (g <= BB_ZERO_BLUE["g_max"]) &
-            (r <= BB_ZERO_BLUE["r_max"])).astype(np.uint8) * 255
-    # The zero line is the single most-horizontal blue row (the moving blue
-    # line is sloped and spreads thin, so it never out-peaks the zero line)
-    y0 = _dominant_hline(blue)
+    # The zero line renders BLUE on the left half and RED on the right half
+    # (each ~40-50% width), so detect it as the most-horizontal blue-OR-red
+    # row. The moving lines are sloped and never out-peak the flat zero line.
+    blue = ((b >= 150) & (g <= 140) & (r <= 140))
+    red_h = ((r >= 150) & (g <= 120) & (b <= 120))
+    ref = (blue | red_h).astype(np.uint8) * 255
+    y0 = _dominant_hline(ref)
     if y0 is None:
         return None, None
 
@@ -296,6 +298,9 @@ def detect_bb(win_bgr):
     dots = cv2.inRange(hsv, *BB_DOT_GREEN_HSV)
     dots = cv2.bitwise_or(dots, cv2.inRange(hsv, *BB_DOT_RED_HSV1))
     dots = cv2.bitwise_or(dots, cv2.inRange(hsv, *BB_DOT_RED_HSV2))
+    # Exclude the zero-line row itself so the red half of the zero line is
+    # not counted as a band pixel (it would drag the band toward zero)
+    dots[max(0, y0 - 4):y0 + 5, :] = 0
     ys, xs = np.where(dots > 0)
     if len(xs) < BB_MIN_PIXELS:
         return None, y0
