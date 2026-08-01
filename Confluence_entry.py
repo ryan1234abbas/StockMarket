@@ -83,24 +83,34 @@ BG_SAT = (8, 110)
 BG_VAL_MIN = 100
 BG_MIN_PIXELS = 150
 
-RSI_BLUE = dict(b_min=170, g_max=140, r_max=140)   # RSI line colors
-RSI_RED = dict(r_min=170, g_max=140, b_max=140)
+RSI_BLUE = dict(b_min=150, g_max=140, r_max=140)   # RSI line colors
+RSI_RED = dict(r_min=150, g_max=140, b_max=140)
 DOTTED_DARK_MAX = 110    # 50-line dots are dark
 HLINE_ROW_FRACTION = 0.55  # a row this full of one color = horizontal marker,
                            # excluded when finding the moving RSI lines
+HLINE_MIN_COV = 0.30     # the reference line (50/zero) is the single row with
+                         # the MOST of its color; it may be partly occluded by
+                         # dots/moving lines so only needs this fraction. The
+                         # sloped moving lines spread thin across many rows and
+                         # never concentrate this much in one row.
 
-BB_ZERO_BLUE = dict(b_min=170, g_max=150, r_max=120)  # solid blue zero line
+BB_ZERO_BLUE = dict(b_min=150, g_max=140, r_max=140)  # solid blue zero line
 BB_DOT_GREEN_HSV = ((35, 90, 90), (85, 255, 255))     # dotted BB curves
 BB_DOT_RED_HSV1 = ((0, 90, 90), (10, 255, 255))
 BB_DOT_RED_HSV2 = ((170, 90, 90), (180, 255, 255))
 BB_MIN_PIXELS = 12
 
-# --- pacing (protections proven in the other bots) ---
-STABLE_FRAMES = 3        # consecutive frames of full alignment
-MIN_SIGNAL_HOLD = 2.0    # seconds the alignment must hold before trading
+# --- pacing ---
+# A six-condition confluence is itself a strong noise filter, so this bot
+# does NOT need the long signal-hold the repaint-prone label bots use. Keep
+# the hold short for fast entries; the fire-once-per-episode arming still
+# prevents repeats.
+STABLE_FRAMES = 2        # consecutive frames of full alignment
+MIN_SIGNAL_HOLD = 0.5    # seconds the alignment must hold before trading
 BUY_COOLDOWN = 3.0
 SELL_COOLDOWN = 3.0
 STATUS_EVERY_N_FRAMES = 30
+LOOP_SLEEP = 0.02        # ~50 checks/sec (was 0.05)
 
 
 def _bg_mask(win_bgr):
@@ -214,6 +224,17 @@ def _horizontal_rows(mask, min_fraction):
     return np.where(counts >= w * min_fraction)[0]
 
 
+def _dominant_hline(mask, min_cov=HLINE_MIN_COV):
+    """Row of the single most-horizontal presence of a color - the fixed
+    reference line (RSI 50 / BB zero). A concentrated horizontal line peaks
+    in one row; a sloped moving line of the same color spreads across many
+    rows and never peaks this high. Returns row index or None."""
+    w = mask.shape[1]
+    counts = (mask > 0).sum(axis=1)
+    y = int(counts.argmax())
+    return y if counts[y] >= w * min_cov else None
+
+
 def detect_rsi(win_bgr):
     """'ABOVE' when the RSI lines sit above the dotted 50 line at the right
     edge, 'BELOW' when below, None when mixed/undetected."""
@@ -231,13 +252,13 @@ def detect_rsi(win_bgr):
         for row in _horizontal_rows(m, HLINE_ROW_FRACTION):
             m[row, :] = 0
 
-    # The dotted 50 line: the row with the most dark dots
+    # The dotted 50 line: the single row with the most dark dots (a fixed
+    # horizontal; the moving lines are colored, not dark)
     dark = ((b <= DOTTED_DARK_MAX) & (g <= DOTTED_DARK_MAX) &
-            (r <= DOTTED_DARK_MAX)).astype(np.uint8)
-    row_counts = dark.sum(axis=1)
-    if row_counts.max() < 4:
+            (r <= DOTTED_DARK_MAX)).astype(np.uint8) * 255
+    y50 = _dominant_hline(dark, min_cov=0.20)
+    if y50 is None:
         return None, None
-    y50 = int(np.argmax(row_counts))
 
     def line_y(mask):
         ys, xs = np.where(mask > 0)
@@ -265,10 +286,11 @@ def detect_bb(win_bgr):
     r = win_bgr[:, :, 2].astype(np.int16)
     blue = ((b >= BB_ZERO_BLUE["b_min"]) & (g <= BB_ZERO_BLUE["g_max"]) &
             (r <= BB_ZERO_BLUE["r_max"])).astype(np.uint8) * 255
-    zero_rows = _horizontal_rows(blue, HLINE_ROW_FRACTION)
-    if zero_rows.size == 0:
+    # The zero line is the single most-horizontal blue row (the moving blue
+    # line is sloped and spreads thin, so it never out-peaks the zero line)
+    y0 = _dominant_hline(blue)
+    if y0 is None:
         return None, None
-    y0 = int(zero_rows.mean())
 
     hsv = cv2.cvtColor(win_bgr, cv2.COLOR_BGR2HSV)
     dots = cv2.inRange(hsv, *BB_DOT_GREEN_HSV)
@@ -599,7 +621,7 @@ class ConfluenceWorker(QThread):
                             log_file.write(log_content)
                         break
 
-                    time.sleep(0.05)
+                    time.sleep(LOOP_SLEEP)
 
             except KeyboardInterrupt:
                 print("KeyboardInterrupt caught, exiting...")
