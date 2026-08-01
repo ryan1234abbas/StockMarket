@@ -62,9 +62,11 @@ BUY_BUTTON_IMG = "buy_mkt.png"
 SELL_BUTTON_IMG = "sell_mkt.png"
 
 # Exit: once in a trade, close it when the full alignment for that direction
-# breaks (any one of the six conditions stops matching). A few-frame confirm
-# stops a single-frame detector glitch from closing a good trade.
-EXIT_STABLE_FRAMES = 3
+# breaks (any one of the six conditions stops matching) CONTINUOUSLY for
+# MIN_EXIT_HOLD seconds. A time-based hold (not a few frames) is essential:
+# individual conditions like the small trigger can oscillate sub-second, and
+# a fast exit turned that into a sell/close/sell churn.
+MIN_EXIT_HOLD = 1.0
 
 # --- color definitions (BGR centers +/- tolerance). Tune via 'd' dumps. ---
 MIDBAND_GREEN_BGR = (4, 255, 129)     # thick chartreuse band (as Midband_entry)
@@ -123,7 +125,9 @@ BB_MIN_PIXELS = 12
 # the hold short for fast entries; the fire-once-per-episode arming still
 # prevents repeats.
 STABLE_FRAMES = 2        # consecutive frames of full alignment
-MIN_SIGNAL_HOLD = 0.5    # seconds the alignment must hold before trading
+MIN_SIGNAL_HOLD = 1.0    # seconds the FULL alignment must hold before entering
+                         # (was 0.5; raised so a sub-second flicker into full
+                         # alignment does not fire - stops the entry churn)
 BUY_COOLDOWN = 3.0
 SELL_COOLDOWN = 3.0
 STATUS_EVERY_N_FRAMES = 30
@@ -413,7 +417,7 @@ class ConfluenceWorker(QThread):
         # Open position + exit tracking
         self.position = None          # None | "LONG" | "SHORT"
         self.close_count = 0
-        self.exit_broken_frames = 0
+        self.exit_broken_since = None  # time the alignment first broke
 
     def log_event(self, text):
         with open("confluence_debug.log", "a") as f:
@@ -449,7 +453,7 @@ class ConfluenceWorker(QThread):
         else:
             self.sell_count += 1
             self.position = "SHORT"
-        self.exit_broken_frames = 0
+        self.exit_broken_since = None
         return side
 
     def close_position(self, reason):
@@ -462,7 +466,7 @@ class ConfluenceWorker(QThread):
         print(f"CLOSED {self.position} - {reason}")
         self.log_event(f"CLOSE {self.position} - {reason}")
         self.position = None
-        self.exit_broken_frames = 0
+        self.exit_broken_since = None
 
     def save_region_overlay(self):
         """Full-screen capture with the three panel boxes drawn on it, so the
@@ -592,10 +596,11 @@ class ConfluenceWorker(QThread):
                     if self.position is not None and not self.paused:
                         want = "BUY" if self.position == "LONG" else "SELL"
                         if signal == want:
-                            self.exit_broken_frames = 0
+                            self.exit_broken_since = None   # still aligned
                         else:
-                            self.exit_broken_frames += 1
-                            if self.exit_broken_frames >= EXIT_STABLE_FRAMES:
+                            if self.exit_broken_since is None:
+                                self.exit_broken_since = time.time()
+                            elif time.time() - self.exit_broken_since >= MIN_EXIT_HOLD:
                                 broke = [k for k, v in states.items()
                                          if v not in ("GREEN" if want == "BUY" else "MAGENTA",
                                                       "ABOVE" if want == "BUY" else "BELOW")]
