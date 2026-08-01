@@ -74,6 +74,13 @@ MIDBAND_MIN_BLOB = 80    # px; the midband is thick - small flecks don't count
 
 LARGE_GREEN_HSV_LO = (35, 100, 50)    # dark-green thick trigger curves
 LARGE_GREEN_HSV_HI = (85, 255, 190)
+LARGE_BEAR_HSV_LO = (140, 90, 90)     # magenta/purple thick trigger curves
+LARGE_BEAR_HSV_HI = (170, 255, 255)
+# The Large Triggers are DIAGONAL curves. The SuperAreas background ZONE
+# bands are the same green/magenta colors but HORIZONTAL - drop any row a
+# color fills wide, so only the curve is counted (this was the bug: green
+# zone bands read as a green trigger and blocked a valid sell).
+LARGE_HBAND_FRAC = 0.55
 LARGE_MIN_PIXELS = 40
 
 SMALL_GREEN_HSV_LO = (35, 120, 170)   # bright thin green trigger lines
@@ -193,19 +200,27 @@ def detect_midband(win_bgr):
     return None
 
 
+def _drop_hbands(mask, frac=LARGE_HBAND_FRAC):
+    """Zero out rows a color fills wide - the horizontal background ZONE
+    bands - so only the diagonal trigger curve survives."""
+    m = mask.copy()
+    cov = (m > 0).sum(axis=1)
+    m[cov >= mask.shape[1] * frac, :] = 0
+    return m
+
+
 def detect_large_triggers(win_bgr):
-    """'GREEN' / 'MAGENTA' by DOMINANCE in the tight edge window - no
-    green-first bias, so a color flip registers as soon as the new color
-    outweighs the old one at the right edge."""
+    """'GREEN' / 'MAGENTA' from the thick DIAGONAL trigger curve, ignoring
+    the horizontal green/magenta background zone bands (same colors), by
+    dominance so a flip registers as soon as the new color outweighs the old."""
     hsv = cv2.cvtColor(win_bgr, cv2.COLOR_BGR2HSV)
-    green = int(cv2.inRange(hsv, LARGE_GREEN_HSV_LO, LARGE_GREEN_HSV_HI).sum() // 255)
-    t = np.array(MIDBAND_MAGENTA_BGR, np.int16)
-    lo = np.clip(t - MIDBAND_TOL, 0, 255).astype(np.uint8)
-    hi = np.clip(t + MIDBAND_TOL, 0, 255).astype(np.uint8)
-    magenta = int(cv2.inRange(win_bgr, lo, hi).sum() // 255)
-    if green >= LARGE_MIN_PIXELS and green > magenta * 1.2:
+    green = _drop_hbands(cv2.inRange(hsv, LARGE_GREEN_HSV_LO, LARGE_GREEN_HSV_HI))
+    mag = _drop_hbands(cv2.inRange(hsv, LARGE_BEAR_HSV_LO, LARGE_BEAR_HSV_HI))
+    g = int(green.sum() // 255)
+    m = int(mag.sum() // 255)
+    if g >= LARGE_MIN_PIXELS and g > m * 1.2:
         return "GREEN"
-    if magenta >= LARGE_MIN_PIXELS and magenta > green * 1.2:
+    if m >= LARGE_MIN_PIXELS and m > g * 1.2:
         return "MAGENTA"
     return None
 
@@ -339,11 +354,12 @@ def diagnostics(price_win, rsi_win, bb_win):
         n, _, st, _ = cv2.connectedComponentsWithStats(m, 8)
         return max((int(st[i, cv2.CC_STAT_AREA]) for i in range(1, n)), default=0)
 
-    lg = int(cv2.inRange(hsv, LARGE_GREEN_HSV_LO, LARGE_GREEN_HSV_HI).sum() // 255)
+    lg = int(_drop_hbands(cv2.inRange(hsv, LARGE_GREEN_HSV_LO, LARGE_GREEN_HSV_HI)).sum() // 255)
+    lm = int(_drop_hbands(cv2.inRange(hsv, LARGE_BEAR_HSV_LO, LARGE_BEAR_HSV_HI)).sum() // 255)
     _, rsi_y = detect_rsi(rsi_win)
     _, bb_y = detect_bb(bb_win)
     return (f"bg[g={bg_g},m={bg_m}] mid[g={blob(MIDBAND_GREEN_BGR)},"
-            f"m={blob(MIDBAND_MAGENTA_BGR)}] large[g={lg}] "
+            f"m={blob(MIDBAND_MAGENTA_BGR)}] large[g={lg},m={lm}] "
             f"rsi[y50={rsi_y}] bb[y0={bb_y}]")
 
 
