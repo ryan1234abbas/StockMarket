@@ -389,7 +389,11 @@ class ConfluenceWorker(QThread):
         self.candidate_frames = 0
         self.candidate_since = 0.0
         # Fire once per alignment episode; re-arm when alignment breaks
-        self.entry_armed = {"BUY": True, "SELL": True}
+        # Start DISARMED so a full alignment that is ALREADY present at
+        # launch is skipped - a side only arms after its alignment has been
+        # seen broken at least once (the re-arm below), so the bot trades a
+        # freshly-formed alignment, never the pre-existing startup state.
+        self.entry_armed = {"BUY": False, "SELL": False}
         # Open position + exit tracking
         self.position = None          # None | "LONG" | "SHORT"
         self.close_count = 0
