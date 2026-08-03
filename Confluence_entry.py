@@ -72,7 +72,9 @@ MIN_EXIT_HOLD = 1.0
 MIDBAND_GREEN_BGR = (4, 255, 129)     # thick chartreuse band (as Midband_entry)
 MIDBAND_MAGENTA_BGR = (255, 4, 255)   # thick magenta band
 MIDBAND_TOL = 60
-MIDBAND_MIN_BLOB = 80    # px; the midband is thick - small flecks don't count
+MIDBAND_MIN_PIXELS = 40  # px of the specific band color (hband-excluded) to
+                         # accept a midband; the band is often fragmented by
+                         # crossing lines so this counts pixels, not one blob
 
 LARGE_GREEN_HSV_LO = (35, 100, 50)    # dark-green thick trigger curves
 LARGE_GREEN_HSV_HI = (85, 255, 190)
@@ -185,21 +187,21 @@ def detect_background(win_bgr):
 
 
 def detect_midband(win_bgr):
-    """'GREEN' / 'MAGENTA' / None from the thick midband. Uses the largest
-    connected blob so thin dashed lines of similar colors don't count."""
-    def blob(center):
+    """'GREEN' / 'MAGENTA' / None from the thick midband. Counts the specific
+    chartreuse/magenta band pixels (which are distinct from the pale
+    background) with horizontal ZONE bands dropped. Uses a total count, not a
+    single blob: other indicator lines/bars cross the band and fragment it,
+    so a blob threshold missed a valid green midband and blocked a buy."""
+    def count(center):
         t = np.array(center, np.int16)
         lo = np.clip(t - MIDBAND_TOL, 0, 255).astype(np.uint8)
         hi = np.clip(t + MIDBAND_TOL, 0, 255).astype(np.uint8)
-        mask = cv2.inRange(win_bgr, lo, hi)
-        n, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
-        return max((int(stats[i, cv2.CC_STAT_AREA]) for i in range(1, n)),
-                   default=0)
-    g = blob(MIDBAND_GREEN_BGR)
-    m = blob(MIDBAND_MAGENTA_BGR)
-    if g >= MIDBAND_MIN_BLOB and g >= m:
+        return int(_drop_hbands(cv2.inRange(win_bgr, lo, hi)).sum() // 255)
+    g = count(MIDBAND_GREEN_BGR)
+    m = count(MIDBAND_MAGENTA_BGR)
+    if g >= MIDBAND_MIN_PIXELS and g > m * 1.2:
         return "GREEN"
-    if m >= MIDBAND_MIN_BLOB:
+    if m >= MIDBAND_MIN_PIXELS and m > g * 1.2:
         return "MAGENTA"
     return None
 
@@ -350,20 +352,18 @@ def diagnostics(price_win, rsi_win, bb_win):
     bg_g = int((bgm & (h >= BG_GREEN_HUE[0]) & (h <= BG_GREEN_HUE[1])).sum())
     bg_m = int((bgm & (h >= BG_MAGENTA_HUE[0]) & (h <= BG_MAGENTA_HUE[1])).sum())
 
-    def blob(center):
+    def band(center):  # count-based, matches detect_midband
         t = np.array(center, np.int16)
         lo = np.clip(t - MIDBAND_TOL, 0, 255).astype(np.uint8)
         hi = np.clip(t + MIDBAND_TOL, 0, 255).astype(np.uint8)
-        m = cv2.inRange(price_win, lo, hi)
-        n, _, st, _ = cv2.connectedComponentsWithStats(m, 8)
-        return max((int(st[i, cv2.CC_STAT_AREA]) for i in range(1, n)), default=0)
+        return int(_drop_hbands(cv2.inRange(price_win, lo, hi)).sum() // 255)
 
     lg = int(_drop_hbands(cv2.inRange(hsv, LARGE_GREEN_HSV_LO, LARGE_GREEN_HSV_HI)).sum() // 255)
     lm = int(_drop_hbands(cv2.inRange(hsv, LARGE_BEAR_HSV_LO, LARGE_BEAR_HSV_HI)).sum() // 255)
     _, rsi_y = detect_rsi(rsi_win)
     _, bb_y = detect_bb(bb_win)
-    return (f"bg[g={bg_g},m={bg_m}] mid[g={blob(MIDBAND_GREEN_BGR)},"
-            f"m={blob(MIDBAND_MAGENTA_BGR)}] large[g={lg},m={lm}] "
+    return (f"bg[g={bg_g},m={bg_m}] mid[g={band(MIDBAND_GREEN_BGR)},"
+            f"m={band(MIDBAND_MAGENTA_BGR)}] large[g={lg},m={lm}] "
             f"rsi[y50={rsi_y}] bb[y0={bb_y}]")
 
 
